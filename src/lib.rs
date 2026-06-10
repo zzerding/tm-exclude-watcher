@@ -1,15 +1,13 @@
-// ABOUTME: tm-watcher 核心库，提供 Time Machine 排除目录的扫描和管理功能
+// ABOUTME: 库入口 - 导出公共接口
 
+mod config;
 mod database;
 mod rules;
 mod scanner;
-pub mod tmutil;
-mod cleaner;
-mod watcher;
+mod tm_backend;
 
-pub use database::{Database, ExclusionRecord};
+pub use config::Config;
+pub use database::Database;
 pub use rules::RuleMatcher;
-pub use scanner::{Scanner, ScanResult};
-pub use tmutil::{TmUtilTrait, RealTmUtil};
-pub use cleaner::{Cleaner, CleanStats};
-pub use watcher::{Watcher, WatchError};
+pub use scanner::{ScanResult, Scanner};
+pub use tm_backend::{FakeTmBackend, TmBackend};

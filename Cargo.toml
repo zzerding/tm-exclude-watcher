@@ -1,15 +1,15 @@
 [package]
 name = "tm-watcher"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+dirs = "5.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
 walkdir = "2.4"
-dirs = "5.0"
-notify = "6.1"
-tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
-clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
 
 [dev-dependencies]
 tempfile = "3.8"

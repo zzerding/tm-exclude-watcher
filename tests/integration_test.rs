@@ -1,0 +1,286 @@
+// ABOUTME: 集成测试 - 验证扫描、排除、数据库记录的端到端行为
+
+use std::fs;
+use tempfile::TempDir;
+use tm_watcher::{Config, Database, Scanner};
+
+#[test]
+fn test_scan_and_exclude_matching_dirs() {
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    // project1/node_modules/ (应被排除)
+    let project1 = base_path.join("project1");
+    let node_modules = project1.join("node_modules");
+    fs::create_dir_all(&node_modules).unwrap();
+
+    // project1/src/ (不应被排除)
+    let src_dir = project1.join("src");
+    fs::create_dir(&src_dir).unwrap();
+
+    // project2/target/ (应被排除)
+    let project2 = base_path.join("project2");
+    let target_dir = project2.join("target");
+    fs::create_dir_all(&target_dir).unwrap();
+
+    // 配置规则
+    let rules = vec!["node_modules".to_string(), "target".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    // 创建临时数据库
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    // 使用 FakeTmBackend 执行扫描
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：2 个目录被排除
+    assert_eq!(result.excluded_count, 2);
+
+    // 断言：数据库有 2 条记录
+    let records = database.get_exclusions().unwrap();
+    assert_eq!(records.len(), 2);
+
+    // 断言：FakeTmBackend 记录了 2 个路径
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert_eq!(excluded_paths.len(), 2);
+    assert!(excluded_paths.contains(&node_modules));
+    assert!(excluded_paths.contains(&target_dir));
+}
+
+#[test]
+fn test_idempotency_no_duplicate_records() {
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let node_modules = base_path.join("project/node_modules");
+    fs::create_dir_all(&node_modules).unwrap();
+
+    // 配置
+    let rules = vec!["node_modules".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config.clone(), database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    // 第一次扫描
+    let result1 = scanner.scan(base_path).unwrap();
+    assert_eq!(result1.excluded_count, 1);
+
+    // 第二次扫描（幂等性测试）
+    let scanner2 = Scanner::with_backend(config, database.clone(), Box::new(tm_backend)).unwrap();
+    let result2 = scanner2.scan(base_path).unwrap();
+
+    // 断言：第二次扫描不应排除任何新目录
+    assert_eq!(result2.excluded_count, 0);
+
+    // 断言：数据库仍然只有 1 条记录
+    let records = database.get_exclusions().unwrap();
+    assert_eq!(records.len(), 1);
+}
+
+#[test]
+fn test_rule_matching_basename_only() {
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    // 创建名字包含但不完全匹配的目录
+    let my_node_modules = base_path.join("my_node_modules");
+    fs::create_dir(&my_node_modules).unwrap();
+
+    let node_modules_backup = base_path.join("node_modules_backup");
+    fs::create_dir(&node_modules_backup).unwrap();
+
+    // 创建精确匹配的目录
+    let node_modules = base_path.join("project/node_modules");
+    fs::create_dir_all(&node_modules).unwrap();
+
+    // 配置规则
+    let rules = vec!["node_modules".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：只有精确匹配的 1 个目录被排除
+    assert_eq!(result.excluded_count, 1);
+
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert_eq!(excluded_paths.len(), 1);
+    assert!(excluded_paths.contains(&node_modules));
+    assert!(!excluded_paths.contains(&my_node_modules));
+    assert!(!excluded_paths.contains(&node_modules_backup));
+}
+
+#[test]
+fn test_non_matching_dirs_not_excluded() {
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    // 创建不匹配规则的目录
+    let src_dir = base_path.join("src");
+    fs::create_dir(&src_dir).unwrap();
+
+    let lib_dir = base_path.join("lib");
+    fs::create_dir(&lib_dir).unwrap();
+
+    let docs_dir = base_path.join("docs");
+    fs::create_dir(&docs_dir).unwrap();
+
+    // 配置规则（不包含 src/lib/docs）
+    let rules = vec!["node_modules".to_string(), "target".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：0 个目录被排除
+    assert_eq!(result.excluded_count, 0);
+
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert_eq!(excluded_paths.len(), 0);
+
+    // 断言：数据库没有记录
+    let records = database.get_exclusions().unwrap();
+    assert_eq!(records.len(), 0);
+}
+
+#[test]
+fn test_symlinks_not_followed() {
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    // 创建真实目录包含 node_modules
+    let real_dir = base_path.join("real_project");
+    let real_node_modules = real_dir.join("node_modules");
+    fs::create_dir_all(&real_node_modules).unwrap();
+
+    // 创建符号链接指向 real_project
+    let symlink_path = base_path.join("symlink_project");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real_dir, &symlink_path).unwrap();
+
+    // 配置规则
+    let rules = vec!["node_modules".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：只有真实目录下的 node_modules 被排除
+    // 符号链接指向的目录内容不应被扫描
+    assert_eq!(result.excluded_count, 1);
+
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert_eq!(excluded_paths.len(), 1);
+    assert!(excluded_paths.contains(&real_node_modules));
+
+    // 确认符号链接路径下的 node_modules 没有被排除
+    let symlink_node_modules = symlink_path.join("node_modules");
+    assert!(!excluded_paths.contains(&symlink_node_modules));
+}
+
+#[test]
+#[cfg(unix)]
+fn test_permission_error_continues_scan() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    // 创建可访问的目录
+    let accessible = base_path.join("accessible");
+    let accessible_node_modules = accessible.join("node_modules");
+    fs::create_dir_all(&accessible_node_modules).unwrap();
+
+    // 创建受限目录
+    let restricted = base_path.join("restricted");
+    fs::create_dir_all(&restricted).unwrap();
+    let restricted_target = restricted.join("target");
+    fs::create_dir(&restricted_target).unwrap();
+
+    // 移除读权限（使其无法访问）
+    let mut perms = fs::metadata(&restricted).unwrap().permissions();
+    perms.set_mode(0o000);
+    fs::set_permissions(&restricted, perms).unwrap();
+
+    // 配置规则
+    let rules = vec!["node_modules".to_string(), "target".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path);
+
+    // 恢复权限以便清理
+    let mut perms = fs::metadata(&restricted).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&restricted, perms).unwrap();
+
+    // 断言：扫描成功完成（权限错误不中断）
+    assert!(result.is_ok());
+    let result = result.unwrap();
+
+    // 断言：可访问的目录被排除
+    assert_eq!(result.excluded_count, 1);
+
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert!(excluded_paths.contains(&accessible_node_modules));
+}
+
+#[test]
+fn test_tm_not_configured_detected() {
+    // 创建未配置的 FakeTmBackend
+    let tm_backend = tm_watcher::FakeTmBackend::new_unconfigured();
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let rules = vec!["node_modules".to_string()];
+    let config = Config { exclude_rules: rules };
+
+    // 断言：Scanner::with_backend() 返回错误
+    let result = Scanner::with_backend(config, database, Box::new(tm_backend));
+    assert!(result.is_err());
+    if let Err(err) = result {
+        assert!(err.to_string().contains("Time Machine 未配置"));
+    }
+}
