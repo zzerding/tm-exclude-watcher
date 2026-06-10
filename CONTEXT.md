@@ -1,0 +1,287 @@
+# Time Machine Watcher - 领域语言
+
+## 核心概念
+
+### 排除规则 (Exclusion Rule)
+匹配模式，定义在配置文件中。例如：`"node_modules"`、`"target"`、`".venv"`。
+
+规则本身是静态的、持久的，不会"过期"。
+
+**匹配语义：精确的目录名匹配（exact basename match）**
+- `"node_modules"` 匹配任何路径下名字恰好是 `node_modules` 的目录
+- `~/Code/node_modules_backup/` 不匹配（名字是 `node_modules_backup`）
+- `~/Code/foo/bar/node_modules/` 匹配（basename 是 `node_modules`）
+- 配置中不带末尾 `/`（文档中的 `/` 仅为说明这是目录）
+
+### 排除目录 (Excluded Directory)
+被规则匹配到的具体文件系统路径。例如：`/Users/biz/Code/project-a/node_modules`。
+
+这是实际被添加到 Time Machine 排除列表的路径。可能因为目录被删除而"过期"。
+
+### 排除记录 (Exclusion Record)
+数据库中存储的条目，包含：
+- 被排除的目录路径
+- 匹配到的规则
+- 目录大小（`size_bytes`）
+- 时间戳和元数据
+
+记录的生命周期：目录被监控到 → 添加记录 → 目录删除 → 清理记录。
+
+**目录大小的用途与维护：**
+- **用途：** 统计功能（"节省了多少备份空间"），辅助用户决策哪些目录值得手动清理
+- **维护策略：** 定期刷新模式
+  - 排除时：计算并记录初始大小
+  - 定期清理时：如果目录仍存在，重新计算并更新 `size_bytes`
+  - 数据新鲜度：最多延迟一个清理周期（默认 24 小时）
+
+### 监控路径 (Watch Path)
+用户配置的根目录，例如 `~/Documents/src`。
+
+监控行为：**递归扫描所有子目录，无深度限制**。FSEvents 会报告该路径下任何深度的文件系统变化。
+
+理由：开发者项目结构千差万别（monorepo、嵌套 workspace），限制深度会漏掉真实场景。
+
+### 确认延迟 (Confirmation Delay)
+检测到符合规则的目录后，等待一段时间再执行排除操作。默认 5 秒。
+
+**目的：Debounce 机制**
+1. 过滤生命周期 < 延迟时长的临时目录
+2. 避免在文件系统事件风暴中立即触发操作
+
+**行为：**
+- 检测到目录创建 → 启动延迟计时器
+- 延迟期间目录被删除 → **取消这次排除操作**
+- 延迟结束且目录仍存在 → 执行排除并记录
+
+### 清理 (Cleanup)
+移除已不存在的目录的排除记录和 Time Machine 排除列表条目。
+
+**三种触发方式（非互斥，共存）：**
+
+1. **实时清理**：监控到目录删除事件时立即清理
+2. **定期清理**：定时全量扫描（默认每日一次），检查所有记录对应的目录是否仍存在
+3. **手动清理**：用户通过 `tm-watcher clean` 命令手动触发
+
+**定期清理的作用（兜底机制）：**
+- 修正实时监控丢失的事件（系统重启、程序崩溃窗口期）
+- 检测用户直接调用 `tmutil removeexclusion` 绕过本工具的情况
+- 对比数据库记录与 `tmutil isexcluded` 的真实状态，修正脏数据
+- 保证最终一致性
+
+## 已移除的设计
+
+### ~~目录大小过滤 (min_directory_size_mb)~~
+PRD 最初提议根据目录大小决定是否排除。
+
+**移除理由：**
+1. 小的依赖目录（如 10 MB 的 `node_modules`）也不应该备份——可重现的构建产物不需要历史版本
+2. 递归计算目录大小是昂贵操作，会成为性能瓶颈
+3. 增加不必要的复杂度和配置负担
+
+**结论：** 只要匹配规则，无论大小都排除。
+
+### 守护进程 (Daemon)
+后台运行的监控服务，响应文件系统事件并执行排除/清理操作。
+
+**生命周期管理（分阶段）：**
+
+**MVP (v0.1.0)：后台进程 + PID 文件**
+- `tm-watcher start`：fork 到后台，写 PID 到 `~/.local/var/run/tm-watcher.pid`
+- `tm-watcher stop`：读取 PID 并发送 SIGTERM
+- 用户需要每次开机后手动启动
+
+**v1.0.0：LaunchAgent 集成**
+- 安装 `~/Library/LaunchAgents/com.tm-watcher.plist`
+- macOS 自动管理：开机启动、崩溃重启
+- `tm-watcher start/stop` 调用 `launchctl load/unload`
+- Homebrew 安装时自动配置 LaunchAgent
+
+### 扫描 (Scan)
+手动触发的全量扫描命令：`tm-watcher scan <path>`
+
+**行为：**
+- 递归扫描指定路径及其所有子目录（与守护进程监控行为一致）
+- 对每个匹配规则的目录，检查是否已有数据库记录：
+  - 已有记录且 `tmutil isexcluded` 确认已排除 → 跳过
+  - 已有记录但实际未排除 → 重新调用 `tmutil addexclusion`
+  - 无记录 → 立即排除并创建记录（无延迟）
+
+**用途：**
+- 用户刚安装工具，一次性排除所有现有依赖目录（"补历史"）
+- 守护进程停止期间创建的目录，手动触发扫描补漏
+
+**幂等性：** 多次扫描同一路径是安全的，不会产生重复记录或重复操作。
+
+### 符号链接 (Symlink)
+符号链接的处理策略：**不跟随（treat as regular files）**
+
+**行为：**
+- 文件系统监控和扫描只处理符号链接本身，不递归进入其指向的目录
+- 仅当符号链接的**名字**匹配规则时才排除它（例如名为 `node_modules` 的符号链接）
+- 符号链接指向的真实目录由其自身路径决定是否被排除
+
+**理由：**
+1. 避免循环引用导致的无限递归
+2. 避免重复排除（真实目录可能已在其他路径被排除）
+3. 简化逻辑，提升性能
+4. Time Machine 本身默认不跟随符号链接
+
+**示例：**
+```
+~/Code/shared-deps/node_modules/        (真实目录) → 被排除
+~/Code/project/node_modules -> ../shared-deps/node_modules/  (符号链接) → 被排除（名字匹配）
+~/Code/project/deps -> /tmp/cache/      (符号链接) → 不被排除（名字不匹配）
+```
+
+### 配置 (Configuration)
+工具行为通过配置文件控制，位于 `~/.config/tm-watcher/config.toml`。
+
+**配置层级（MVP）：**
+- **单一全局配置**：所有设置、监控路径、规则都在这一个文件中
+- 不支持项目级配置文件（未来可通过白名单机制实现定制需求）
+
+**零配置体验：**
+首次运行 `tm-watcher start` 时，如果配置文件不存在，自动生成默认配置：
+```toml
+watch_paths = ["~/Documents", "~/Projects", "~/Code", "~/Developer"]
+exclude_rules = [
+    "node_modules", "target", "vendor", 
+    ".venv", "venv", "virtualenv", "__pycache__",
+    "build", "dist", ".next", ".nuxt", ".cache"
+]
+
+[cleanup]
+enabled = true
+interval_hours = 24
+cleanup_on_delete = true
+
+[behavior]
+confirmation_delay_seconds = 5
+```
+
+**配置说明：**
+- 默认监控常见开发目录（路径不存在也不报错，静默跳过）
+- 用户可通过 `tm-watcher config --add-path <path>` 或手动编辑调整
+- 真正零配置：安装后直接 `tm-watcher start` 即可工作
+
+**配置内容：**
+- `watch_paths`：要监控的根目录列表
+- `exclude_rules`：目录名匹配规则列表
+- `cleanup.enabled`：是否启用定期清理
+- `cleanup.interval_hours`：定期清理间隔（小时）
+- `cleanup.cleanup_on_delete`：是否启用实时清理
+- `behavior.confirmation_delay_seconds`：确认延迟（秒）
+
+**未来扩展（v0.3+）：**
+可通过 `whitelist_paths` 实现特定路径的排除豁免（例如某些特殊项目的依赖需要备份）。
+
+### 错误处理 (Error Handling)
+与 `tmutil` 交互时的失败场景分级处理。
+
+**场景分类与处理策略：**
+
+**1. 目录不存在（Error -43）**
+- 场景：`tmutil addexclusion` 时目录在延迟期间被删除
+- 处理：静默忽略，记录 debug 级别日志
+- 理由：目录已不存在，无需排除，这是正常的竞态条件
+
+**2. 权限不足（Operation not permitted）**
+- 场景：尝试排除受保护的系统路径
+- 处理：记录 warning 日志，跳过该目录，**不写入数据库**
+- 理由：无法排除的目录不应记录为"已排除"
+
+**3. Time Machine 未配置**
+- 场景：系统未启用 Time Machine
+- 处理：**启动时检测，未配置则输出错误并退出**
+- 理由：Time Machine 是工具运行的前提条件，不满足无法工作
+
+**前置检查：**
+守护进程启动时执行 `tmutil status` 或 `tmutil destinationinfo`，确认 Time Machine 已配置且可用。
+
+### 日志 (Logging)
+使用 `tracing` + `tracing-subscriber` 记录运行状态和错误。
+
+**输出目标（MVP）：**
+- **守护进程：** 写入文件 `~/.local/share/tm-watcher/daemon.log`
+- **CLI 命令：** 输出到 stderr（用户交互式执行时可见）
+
+**日志级别分类：**
+- **Info：** 排除/清理操作（"Excluded /path/to/dir", "Cleaned 3 stale entries"）
+- **Warning：** tmutil 失败但可恢复的错误（权限不足、目录不存在）
+- **Error：** 致命错误（Time Machine 未配置、数据库损坏）
+
+**日志轮转（MVP）：**
+不实现轮转，简单追加写入。未来版本（v0.2+）可加入"保留最近 7 天"策略。
+
+**查看命令：**
+`tm-watcher logs` 等价于 `tail -f ~/.local/share/tm-watcher/daemon.log`，实时查看守护进程日志。
+
+### 数据存储 (Data Storage)
+使用 SQLite 存储排除记录，文件位于 `~/.local/share/tm-watcher/exclusions.db`。
+
+**目录结构：**
+```
+~/.local/share/tm-watcher/
+├── daemon.log         # 守护进程日志
+└── exclusions.db      # SQLite 数据库
+```
+
+**Schema 版本管理（MVP）：**
+- 不实现迁移机制
+- 使用 SQLite `PRAGMA user_version` 记录 schema 版本号（初始为 1）
+- 如果未来版本检测到版本不匹配，提示用户删除旧数据库并重新扫描
+- v1.0 前如果需要保留数据，再加入迁移逻辑
+
+**理由：**
+- MVP schema 简单且稳定，预期不会频繁变更
+- 数据可重建（重新扫描即可），不是关键持久化数据
+- 避免过早优化
+
+### 并发控制 (Concurrency Control)
+多个操作可能同时访问数据库和文件系统（守护进程、定期清理、CLI 命令）。
+
+**并发策略：多进程 + 数据库事务**
+
+**架构：**
+- CLI 命令（`scan`/`clean`）直接操作数据库，不通过 IPC
+- SQLite 的文件锁机制保证多进程并发安全
+- 守护进程内部使用单线程事件循环（Rust async runtime），避免线程竞争
+- 定期清理作为独立 task，与 FSEvents 处理通过 channel 通信
+
+**防止竞态条件：**
+1. **重复排除：** 使用 `INSERT OR IGNORE`（schema 中 `path` 字段有 `UNIQUE` 约束）
+2. **排除与清理冲突：** 清理操作先 `SELECT` 检查记录是否存在，再 `DELETE`
+3. **目录状态检查：** 操作前用 `std::fs::metadata` 确认目录当前状态
+
+**理由：**
+- SQLite 自带并发控制，无需额外 IPC 机制
+- 实现简单，符合 MVP 目标
+- 性能足够（文件系统操作比数据库慢得多，不存在瓶颈）
+
+## MVP (v0.1.0) 范围
+
+### 包含的功能
+- **核心监控：** FSEvents 文件系统监控，递归扫描监控路径
+- **自动排除：** 检测匹配规则的目录，延迟确认后排除
+- **实时清理：** 检测到目录删除时立即清理排除记录
+- **定期清理：** 每 24 小时全量扫描，修正脏数据（兜底机制）
+- **CLI 命令：**
+  - `start` / `stop` - 启动/停止守护进程（PID 文件模式）
+  - `scan <path>` - 手动扫描指定路径
+  - `list` - 列出所有已排除目录
+  - `status` - 显示监控状态（监控路径、已排除数量、最后清理时间）
+  - `clean` - 手动触发清理
+- **数据存储：** SQLite 数据库，记录排除目录及元数据
+- **日志系统：** 写入 `~/.local/share/tm-watcher/daemon.log`
+- **错误处理：** tmutil 失败分级处理，启动时检测 Time Machine 状态
+- **零配置：** 首次运行自动生成默认配置
+
+### 推迟到 v0.2.0
+- `logs` 命令（用户可手动 `tail -f ~/.local/share/tm-watcher/daemon.log`）
+- `config` 命令（用户可手动编辑 `~/.config/tm-watcher/config.toml`）
+- macOS 通知中心集成
+- 日志轮转
+
+### 推迟到 v1.0.0
+- LaunchAgent 自动启动集成
+- Homebrew 发布
