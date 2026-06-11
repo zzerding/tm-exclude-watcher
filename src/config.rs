@@ -12,6 +12,20 @@ pub struct Config {
     /// 目录名匹配规则列表
     #[serde(default)]
     pub exclude_rules: Vec<String>,
+    /// 确认延迟秒数（目录创建后等待此时长再排除）
+    #[serde(default = "default_confirmation_delay")]
+    pub confirmation_delay_seconds: u64,
+    /// 删除目录时是否自动清理数据库记录
+    #[serde(default = "default_cleanup_on_delete")]
+    pub cleanup_on_delete: bool,
+}
+
+fn default_confirmation_delay() -> u64 {
+    5
+}
+
+fn default_cleanup_on_delete() -> bool {
+    true
 }
 
 impl Config {
@@ -41,6 +55,8 @@ impl Config {
             .into_iter()
             .map(String::from)
             .collect(),
+            confirmation_delay_seconds: default_confirmation_delay(),
+            cleanup_on_delete: default_cleanup_on_delete(),
         }
     }
 

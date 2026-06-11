@@ -1,0 +1,399 @@
+// ABOUTME: 实时文件系统监控 - 检测目录创建/删除并自动应用排除规则
+
+use anyhow::{Context, Result};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+
+use crate::{Config, Database, RuleMatcher, TmBackend};
+
+pub struct Watcher {
+    config: Config,
+    database: Arc<Database>,
+    tm_backend: Arc<dyn TmBackend>,
+    matcher: RuleMatcher,
+    pending_exclusions: Arc<Mutex<HashMap<PathBuf, JoinHandle<()>>>>,
+}
+
+impl Watcher {
+    pub fn new(config: Config, database: Database, tm_backend: Box<dyn TmBackend>) -> Result<Self> {
+        let matcher = RuleMatcher::new(config.exclude_rules.clone());
+        Ok(Self {
+            config,
+            database: Arc::new(database),
+            tm_backend: Arc::from(tm_backend),
+            matcher,
+            pending_exclusions: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
+    pub async fn watch(&self, path: &Path) -> Result<()> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| {
+            if let Ok(event) = res {
+                let _ = tx.send(event);
+            }
+        })?;
+
+        watcher
+            .watch(path, RecursiveMode::Recursive)
+            .context("无法启动文件系统监控")?;
+
+        println!("开始监控: {}", path.display());
+        println!("按 Ctrl+C 停止监控");
+
+        loop {
+            tokio::select! {
+                Some(event) = rx.recv() => {
+                    self.handle_event(event).await;
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\n正在停止监控...");
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_event(&self, event: Event) {
+        for path in event.paths {
+            match event.kind {
+                EventKind::Create(_) if path.exists() => self.handle_create(path).await,
+                EventKind::Remove(_) => self.handle_remove(path).await,
+                EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                    if path.exists() {
+                        self.handle_create(path).await;
+                    } else {
+                        self.handle_remove(path).await;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn handle_create(&self, path: PathBuf) {
+        if !path.is_dir() || path.is_symlink() {
+            return;
+        }
+
+        if self.matcher.matches(&path).is_none() {
+            return;
+        }
+
+        let already_covered = tokio::task::spawn_blocking({
+            let db = self.database.clone();
+            let path = path.clone();
+            move || has_recorded_exclusion_for_self_or_ancestor(&db, &path)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+
+        if already_covered || self.has_pending_exclusion_for_self_or_ancestor(&path).await {
+            return;
+        }
+
+        self.cancel_pending_exclusions_under(&path).await;
+
+        let delay = Duration::from_secs(self.config.confirmation_delay_seconds);
+        let handle = tokio::spawn({
+            let path = path.clone();
+            let path_for_cleanup = path.clone();
+            let db = self.database.clone();
+            let tm = self.tm_backend.clone();
+            let matcher = self.matcher.clone();
+            let pending = self.pending_exclusions.clone();
+
+            async move {
+                tokio::time::sleep(delay).await;
+
+                if !path.exists() {
+                    pending.lock().await.remove(&path_for_cleanup);
+                    return;
+                }
+
+                let rule = matcher
+                    .matches(&path)
+                    .unwrap_or_else(|| "unknown".to_string());
+                let display_path = path.display().to_string();
+
+                let exclude_result = tokio::task::spawn_blocking({
+                    let tm = tm.clone();
+                    let path = path.clone();
+                    move || tm.add_exclusion(&path)
+                })
+                .await;
+
+                match exclude_result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        eprintln!("⚠ 排除失败: {} - {}", display_path, e);
+                        pending.lock().await.remove(&path_for_cleanup);
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("⚠ 排除任务失败: {} - {}", display_path, e);
+                        pending.lock().await.remove(&path_for_cleanup);
+                        return;
+                    }
+                }
+
+                let record_result =
+                    tokio::task::spawn_blocking(move || db.record_exclusion(&path, &rule, None))
+                        .await;
+
+                match record_result {
+                    Ok(Ok(())) => println!("✓ 已排除: {}", display_path),
+                    Ok(Err(e)) => eprintln!("⚠ 已排除但记录失败: {} - {}", display_path, e),
+                    Err(e) => eprintln!("⚠ 已排除但记录任务失败: {} - {}", display_path, e),
+                }
+
+                pending.lock().await.remove(&path_for_cleanup);
+            }
+        });
+
+        self.pending_exclusions.lock().await.insert(path, handle);
+    }
+
+    async fn handle_remove(&self, path: PathBuf) {
+        if let Some(handle) = self.pending_exclusions.lock().await.remove(&path) {
+            handle.abort();
+            println!("✗ 取消排除: {}", path.display());
+            return;
+        }
+
+        if !self.config.cleanup_on_delete {
+            return;
+        }
+
+        let has_record = tokio::task::spawn_blocking({
+            let db = self.database.clone();
+            let path = path.clone();
+            move || db.has_exclusion(&path)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+
+        if !has_record {
+            return;
+        }
+
+        let display_path = path.display().to_string();
+        let _ = tokio::task::spawn_blocking({
+            let db = self.database.clone();
+            move || db.delete_exclusion(&path)
+        })
+        .await;
+        println!("🗑 清理记录: {}", display_path);
+    }
+
+    async fn has_pending_exclusion_for_self_or_ancestor(&self, path: &Path) -> bool {
+        let pending = self.pending_exclusions.lock().await;
+        path.ancestors()
+            .any(|ancestor| pending.contains_key(ancestor))
+    }
+
+    async fn cancel_pending_exclusions_under(&self, path: &Path) {
+        let mut pending = self.pending_exclusions.lock().await;
+        let nested_paths: Vec<PathBuf> = pending
+            .keys()
+            .filter(|pending_path| pending_path.starts_with(path) && pending_path.as_path() != path)
+            .cloned()
+            .collect();
+
+        for nested_path in nested_paths {
+            if let Some(handle) = pending.remove(&nested_path) {
+                handle.abort();
+                println!("✗ 取消嵌套排除: {}", nested_path.display());
+            }
+        }
+    }
+}
+
+fn has_recorded_exclusion_for_self_or_ancestor(database: &Database, path: &Path) -> Result<bool> {
+    for ancestor in path.ancestors() {
+        if database.has_exclusion(ancestor)? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FakeTmBackend;
+    use notify::event::{CreateKind, ModifyKind, RenameMode};
+    use tempfile::TempDir;
+
+    fn test_config() -> Config {
+        Config {
+            exclude_rules: vec!["node_modules".to_string()],
+            confirmation_delay_seconds: 0,
+            cleanup_on_delete: true,
+            ..Default::default()
+        }
+    }
+
+    fn test_watcher(config: Config, database: Database, tm_backend: FakeTmBackend) -> Watcher {
+        Watcher::new(config, database, Box::new(tm_backend)).unwrap()
+    }
+
+    async fn wait_for_add_count(tm_backend: &FakeTmBackend, expected_count: usize) {
+        for _ in 0..100 {
+            if tm_backend.add_exclusion_call_count() == expected_count {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(tm_backend.add_exclusion_call_count(), expected_count);
+    }
+
+    #[tokio::test]
+    async fn rename_to_existing_matching_directory_is_created() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("node_modules");
+        std::fs::create_dir(&path).unwrap();
+
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        let tm_backend = FakeTmBackend::new();
+        let watcher = test_watcher(test_config(), database.clone(), tm_backend.clone());
+
+        watcher
+            .handle_event(Event {
+                kind: EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+                paths: vec![path.clone()],
+                attrs: Default::default(),
+            })
+            .await;
+        wait_for_add_count(&tm_backend, 1).await;
+
+        assert!(database.has_exclusion(&path).unwrap());
+    }
+
+    #[tokio::test]
+    async fn rename_missing_matching_directory_is_removed() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("node_modules");
+
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        database
+            .record_exclusion(&path, "node_modules", None)
+            .unwrap();
+        let tm_backend = FakeTmBackend::new();
+        let watcher = test_watcher(test_config(), database.clone(), tm_backend);
+
+        watcher
+            .handle_event(Event {
+                kind: EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+                paths: vec![path.clone()],
+                attrs: Default::default(),
+            })
+            .await;
+
+        assert!(!database.has_exclusion(&path).unwrap());
+    }
+
+    #[tokio::test]
+    async fn create_skips_directory_under_recorded_exclusion() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent = temp_dir.path().join("node_modules");
+        let child = parent.join("node_modules");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        database
+            .record_exclusion(&parent, "node_modules", None)
+            .unwrap();
+        let tm_backend = FakeTmBackend::new();
+        let watcher = test_watcher(test_config(), database.clone(), tm_backend.clone());
+
+        watcher.handle_create(child.clone()).await;
+
+        assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+        assert!(!database.has_exclusion(&child).unwrap());
+    }
+
+    #[tokio::test]
+    async fn create_skips_directory_under_pending_exclusion() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent = temp_dir.path().join("node_modules");
+        let child = parent.join("node_modules");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        let tm_backend = FakeTmBackend::new();
+        let mut config = test_config();
+        config.confirmation_delay_seconds = 60;
+        let watcher = test_watcher(config, database, tm_backend.clone());
+
+        watcher.handle_create(parent.clone()).await;
+        watcher.handle_create(child).await;
+        assert_eq!(watcher.pending_exclusions.lock().await.len(), 1);
+
+        watcher.handle_remove(parent).await;
+        assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn parent_create_cancels_nested_pending_exclusion() {
+        let temp_dir = TempDir::new().unwrap();
+        let parent = temp_dir.path().join("node_modules");
+        let child = parent.join("node_modules");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        let tm_backend = FakeTmBackend::new();
+        let mut config = test_config();
+        config.confirmation_delay_seconds = 60;
+        let watcher = test_watcher(config, database, tm_backend.clone());
+
+        watcher.handle_create(child.clone()).await;
+        watcher.handle_create(parent.clone()).await;
+
+        let pending = watcher.pending_exclusions.lock().await;
+        assert_eq!(pending.len(), 1);
+        assert!(pending.contains_key(&parent));
+        assert!(!pending.contains_key(&child));
+        drop(pending);
+
+        watcher.handle_remove(parent).await;
+        assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn create_does_not_record_when_add_exclusion_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("node_modules");
+        std::fs::create_dir(&path).unwrap();
+
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        let tm_backend = FakeTmBackend::new();
+        tm_backend.fail_next_add_other("boom");
+        let watcher = test_watcher(test_config(), database.clone(), tm_backend.clone());
+
+        watcher
+            .handle_event(Event {
+                kind: EventKind::Create(CreateKind::Folder),
+                paths: vec![path.clone()],
+                attrs: Default::default(),
+            })
+            .await;
+        wait_for_add_count(&tm_backend, 1).await;
+
+        assert!(!database.has_exclusion(&path).unwrap());
+    }
+}

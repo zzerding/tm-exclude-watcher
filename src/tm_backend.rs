@@ -44,6 +44,7 @@ pub struct FakeTmBackend {
     add_exclusion_calls: Arc<AtomicUsize>,
     remove_exclusion_calls: Arc<AtomicUsize>,
     is_excluded_calls: Arc<AtomicUsize>,
+    next_add_error: Arc<Mutex<Option<String>>>,
     next_remove_error: Arc<Mutex<Option<FakeRemoveError>>>,
     is_configured: bool,
 }
@@ -67,6 +68,7 @@ impl FakeTmBackend {
             add_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             remove_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             is_excluded_calls: Arc::new(AtomicUsize::new(0)),
+            next_add_error: Arc::new(Mutex::new(None)),
             next_remove_error: Arc::new(Mutex::new(None)),
             is_configured: true,
         }
@@ -79,6 +81,7 @@ impl FakeTmBackend {
             add_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             remove_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             is_excluded_calls: Arc::new(AtomicUsize::new(0)),
+            next_add_error: Arc::new(Mutex::new(None)),
             next_remove_error: Arc::new(Mutex::new(None)),
             is_configured: false,
         }
@@ -109,6 +112,10 @@ impl FakeTmBackend {
         self.is_excluded_calls.load(Ordering::SeqCst)
     }
 
+    pub fn fail_next_add_other(&self, message: &str) {
+        *self.next_add_error.lock().unwrap() = Some(message.to_string());
+    }
+
     pub fn fail_next_remove_path_not_found(&self) {
         *self.next_remove_error.lock().unwrap() = Some(FakeRemoveError::PathNotFound);
     }
@@ -124,6 +131,10 @@ impl TmBackend for FakeTmBackend {
     }
     fn add_exclusion(&self, path: &Path) -> Result<()> {
         self.add_exclusion_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(message) = self.next_add_error.lock().unwrap().take() {
+            return Err(anyhow::anyhow!(message));
+        }
+
         self.excluded_paths
             .lock()
             .unwrap()
