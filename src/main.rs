@@ -83,8 +83,9 @@ fn default_db_path() -> Result<PathBuf> {
 /// 展开路径中的 ~ 为用户主目录
 fn expand_tilde(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir() {
-            return home.join(rest).to_string_lossy().into_owned();
-        }
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).to_string_lossy().into_owned();
+    }
     path.to_string()
 }

@@ -351,3 +351,83 @@ fn test_scan_result_reports_skipped_count() {
     assert_eq!(result.skipped_count, 1);
     assert!(result.errors.is_empty());
 }
+
+#[test]
+fn test_pruning_skips_subtree_of_matched_dir() {
+    // 创建嵌套结构: project/node_modules/foo/node_modules
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let outer = base_path.join("project/node_modules");
+    let nested = outer.join("foo/node_modules");
+    fs::create_dir_all(&nested).unwrap();
+
+    // node_modules 内部还有一个匹配其他规则的目录
+    let nested_cache = outer.join("bar/.cache");
+    fs::create_dir_all(&nested_cache).unwrap();
+
+    let rules = vec!["node_modules".to_string(), ".cache".to_string()];
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：只有最外层 node_modules 被排除（TM 排除是递归的，子树无需单独排除）
+    assert_eq!(result.excluded_count, 1);
+
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert_eq!(excluded_paths.len(), 1);
+    assert!(excluded_paths.contains(&outer));
+    assert!(!excluded_paths.contains(&nested));
+    assert!(!excluded_paths.contains(&nested_cache));
+
+    // 断言：数据库只有 1 条记录，无嵌套冗余
+    let records = database.get_exclusions().unwrap();
+    assert_eq!(records.len(), 1);
+}
+
+#[test]
+fn test_pruning_also_skips_already_excluded_dirs() {
+    // 已排除的目录同样应被剪枝，不深入遍历
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let outer = base_path.join("project/node_modules");
+    let nested = outer.join("foo/target");
+    fs::create_dir_all(&nested).unwrap();
+
+    let rules = vec!["node_modules".to_string(), "target".to_string()];
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    // 预先排除外层 node_modules（模拟之前扫描过）
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    use tm_watcher::TmBackend;
+    tm_backend.add_exclusion(&outer).unwrap();
+
+    let scanner = Scanner::with_backend(config, database, Box::new(tm_backend.clone())).unwrap();
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：外层跳过，内层 target 不被遍历到
+    assert_eq!(result.excluded_count, 0);
+    assert_eq!(result.skipped_count, 1);
+
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert!(!excluded_paths.contains(&nested));
+}

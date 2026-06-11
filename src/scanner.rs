@@ -40,12 +40,16 @@ impl Scanner {
     }
 
     /// 扫描指定路径，排除匹配的目录
+    ///
+    /// 性能优化：匹配的目录会被剪枝（skip_current_dir），不再遍历其子树。
+    /// Time Machine 排除本身是递归的，子树内嵌套的匹配目录无需单独排除。
     pub fn scan(&self, path: &Path) -> Result<ScanResult> {
         let mut excluded_count = 0;
         let mut skipped_count = 0;
         let mut errors = Vec::new();
 
-        for entry in WalkDir::new(path).follow_links(false) {
+        let mut it = WalkDir::new(path).follow_links(false).into_iter();
+        while let Some(entry) = it.next() {
             // 处理权限错误：记录但继续扫描
             let entry = match entry {
                 Ok(e) => e,
@@ -78,6 +82,9 @@ impl Scanner {
 
                     excluded_count += 1;
                 }
+
+                // 剪枝：已排除的目录子树无需遍历
+                it.skip_current_dir();
             }
         }
 
