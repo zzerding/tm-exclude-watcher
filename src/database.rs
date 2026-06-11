@@ -49,6 +49,17 @@ impl Database {
         Ok(())
     }
 
+    /// 检查路径是否已有排除记录
+    pub fn has_exclusion(&self, path: &Path) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM excluded_directories WHERE path = ?",
+            params![path.to_str().unwrap()],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// 获取所有排除记录
     pub fn get_exclusions(&self) -> Result<Vec<ExclusionRecord>> {
         let conn = self.conn.lock().unwrap();

@@ -3,6 +3,7 @@
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Time Machine 操作的抽象接口
@@ -21,6 +22,8 @@ pub trait TmBackend: Send + Sync {
 #[derive(Clone)]
 pub struct FakeTmBackend {
     excluded_paths: Arc<Mutex<HashSet<PathBuf>>>,
+    add_exclusion_calls: Arc<AtomicUsize>,
+    is_excluded_calls: Arc<AtomicUsize>,
     is_configured: bool,
 }
 
@@ -34,6 +37,8 @@ impl FakeTmBackend {
     pub fn new() -> Self {
         Self {
             excluded_paths: Arc::new(Mutex::new(HashSet::new())),
+            add_exclusion_calls: Arc::new(AtomicUsize::new(0)),
+            is_excluded_calls: Arc::new(AtomicUsize::new(0)),
             is_configured: true,
         }
     }
@@ -42,6 +47,8 @@ impl FakeTmBackend {
     pub fn new_unconfigured() -> Self {
         Self {
             excluded_paths: Arc::new(Mutex::new(HashSet::new())),
+            add_exclusion_calls: Arc::new(AtomicUsize::new(0)),
+            is_excluded_calls: Arc::new(AtomicUsize::new(0)),
             is_configured: false,
         }
     }
@@ -55,6 +62,16 @@ impl FakeTmBackend {
             .cloned()
             .collect()
     }
+
+    /// 获取 add_exclusion 调用次数（测试用）
+    pub fn add_exclusion_call_count(&self) -> usize {
+        self.add_exclusion_calls.load(Ordering::SeqCst)
+    }
+
+    /// 获取 is_excluded 调用次数（测试用）
+    pub fn is_excluded_call_count(&self) -> usize {
+        self.is_excluded_calls.load(Ordering::SeqCst)
+    }
 }
 
 impl TmBackend for FakeTmBackend {
@@ -62,6 +79,7 @@ impl TmBackend for FakeTmBackend {
         Ok(self.is_configured)
     }
     fn add_exclusion(&self, path: &Path) -> Result<()> {
+        self.add_exclusion_calls.fetch_add(1, Ordering::SeqCst);
         self.excluded_paths
             .lock()
             .unwrap()
@@ -70,6 +88,7 @@ impl TmBackend for FakeTmBackend {
     }
 
     fn is_excluded(&self, path: &Path) -> Result<bool> {
+        self.is_excluded_calls.fetch_add(1, Ordering::SeqCst);
         Ok(self.excluded_paths.lock().unwrap().contains(path))
     }
 }

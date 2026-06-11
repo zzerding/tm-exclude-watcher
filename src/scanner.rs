@@ -110,6 +110,8 @@ impl Scanner {
     }
 
     /// 排除单个目录：幂等检查 → tmutil 排除 → 数据库记录
+    /// 更正：scan 热路径现在先信任数据库记录，已有记录时不调用 tmutil。
+    /// 排除单个目录：数据库热路径检查 → tmutil 排除 → 数据库记录
     fn exclude_one(
         &self,
         path: &Path,
@@ -117,13 +119,14 @@ impl Scanner {
         excluded_count: &mut usize,
         skipped_count: &mut usize,
     ) -> Result<()> {
-        if self.tm_backend.is_excluded(path)? {
+        if self.database.has_exclusion(path)? {
             *skipped_count += 1;
-        } else {
-            self.tm_backend.add_exclusion(path)?;
-            self.database.record_exclusion(path, rule, None)?;
-            *excluded_count += 1;
+            return Ok(());
         }
+
+        self.tm_backend.add_exclusion(path)?;
+        self.database.record_exclusion(path, rule, None)?;
+        *excluded_count += 1;
         Ok(())
     }
 }
