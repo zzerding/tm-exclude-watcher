@@ -1,7 +1,7 @@
 // ABOUTME: 数据库层 - SQLite 存储排除记录
 
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -112,6 +112,20 @@ impl Database {
 
         Ok(records)
     }
+
+    /// 获取最后一次清理时间（基于 MAX(last_checked_at)）
+    pub fn last_cleanup_time(&self) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT MAX(last_checked_at) FROM excluded_directories",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(result)
+    }
 }
 
 fn validate_schema(conn: &Connection, db_path: &Path) -> Result<()> {
@@ -138,4 +152,50 @@ fn validate_schema(conn: &Connection, db_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_last_cleanup_time_empty_database() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let database = Database::new(&db_path).unwrap();
+
+        assert_eq!(database.last_cleanup_time().unwrap(), None);
+    }
+
+    #[test]
+    fn test_last_cleanup_time_returns_max() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let database = Database::new(&db_path).unwrap();
+
+        // 插入三条记录，手动设置不同的 last_checked_at
+        let conn = database.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO excluded_directories (path, rule, last_checked_at) VALUES (?, ?, ?)",
+            rusqlite::params!["/tmp/a", "node_modules", "2026-06-10 10:00:00"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO excluded_directories (path, rule, last_checked_at) VALUES (?, ?, ?)",
+            rusqlite::params!["/tmp/b", "target", "2026-06-11 15:30:22"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO excluded_directories (path, rule, last_checked_at) VALUES (?, ?, ?)",
+            rusqlite::params!["/tmp/c", "vendor", "2026-06-09 08:00:00"],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            database.last_cleanup_time().unwrap(),
+            Some("2026-06-11 15:30:22".to_string())
+        );
+    }
 }

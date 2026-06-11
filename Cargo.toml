@@ -13,6 +13,7 @@ anyhow = "1.0"
 jwalk = "0.8.1"
 notify = "6.1"
 tokio = { version = "1", features = ["full"] }
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.8"

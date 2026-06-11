@@ -744,6 +744,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "jwalk",
+ "libc",
  "notify",
  "rusqlite",
  "serde",
