@@ -65,8 +65,11 @@ impl Watcher {
     async fn handle_event(&self, event: Event) {
         for path in event.paths {
             match event.kind {
-                EventKind::Create(_) => self.handle_create(path).await,
+                EventKind::Create(_) if path.exists() => self.handle_create(path).await,
                 EventKind::Remove(_) => self.handle_remove(path).await,
+                EventKind::Modify(notify::event::ModifyKind::Name(_)) if !path.exists() => {
+                    self.handle_remove(path).await
+                }
                 _ => {}
             }
         }
@@ -98,14 +101,17 @@ impl Watcher {
         let delay = Duration::from_secs(self.config.confirmation_delay_seconds);
         let handle = tokio::spawn({
             let path = path.clone();
+            let path_for_cleanup = path.clone();
             let db = self.database.clone();
             let tm = self.tm_backend.clone();
             let matcher = self.matcher.clone();
+            let pending = self.pending_exclusions.clone();
 
             async move {
                 tokio::time::sleep(delay).await;
 
                 if !path.exists() {
+                    pending.lock().await.remove(&path_for_cleanup);
                     return;
                 }
 
@@ -133,6 +139,8 @@ impl Watcher {
                         Err(e) => eprintln!("⚠ 已排除但记录任务失败: {} - {}", display_path, e),
                     }
                 }
+
+                pending.lock().await.remove(&path_for_cleanup);
             }
         });
 
