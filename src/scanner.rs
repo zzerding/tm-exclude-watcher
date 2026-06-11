@@ -109,6 +109,8 @@ impl Scanner {
         })
     }
 
+    /// 排除单个目录：幂等检查 → tmutil 排除 → 数据库记录
+    /// 更正：scan 热路径现在先信任数据库记录，已有记录时不调用 tmutil。
     /// 排除单个目录：数据库热路径检查 → tmutil 排除 → 数据库记录
     fn exclude_one(
         &self,
@@ -118,24 +120,13 @@ impl Scanner {
         skipped_count: &mut usize,
     ) -> Result<()> {
         if self.database.has_exclusion(path)? {
-            debug_log(&format!(
-                "数据库已有记录，跳过 tmutil 检查: {}",
-                path.display()
-            ));
             *skipped_count += 1;
             return Ok(());
         }
 
-        debug_log(&format!("新增 Time Machine 排除: {}", path.display()));
         self.tm_backend.add_exclusion(path)?;
         self.database.record_exclusion(path, rule, None)?;
         *excluded_count += 1;
         Ok(())
-    }
-}
-
-fn debug_log(message: &str) {
-    if std::env::var_os("TM_WATCHER_DEBUG").is_some() {
-        eprintln!("调试: {}", message);
     }
 }
