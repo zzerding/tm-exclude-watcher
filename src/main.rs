@@ -1,198 +1,91 @@
-// ABOUTME: tm-watcher CLI 入口，处理命令行参数并执行扫描
+// ABOUTME: CLI 入口 - tm-watcher scan <path>
 
-use std::env;
-use std::path::Path;
-use std::process;
-use std::sync::Arc;
-use std::time::Duration;
-use tm_watcher::{Cleaner, Database, RealTmUtil, RuleMatcher, Scanner, Watcher};
+use anyhow::{Context, Result};
+use std::path::PathBuf;
+use tm_watcher::{Config, Database, RealTmBackend, Scanner};
 
-#[tokio::main]
-async fn main() {
-    let args: Vec<String> = env::args().collect();
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("错误: {}", err);
+        std::process::exit(1);
+    }
+}
 
-    if args.len() < 2 {
-        eprintln!("用法: tm-watcher <命令> [参数]");
-        eprintln!("命令:");
-        eprintln!("  scan <目录>  - 扫描目录并排除匹配规则的子目录");
-        eprintln!("  list         - 列出所有排除记录");
-        eprintln!("  clean        - 清理无效记录并更新元数据");
-        eprintln!("  watch <目录> - 实时监控目录并自动排除");
-        process::exit(1);
+fn run() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+
+    match args.get(1).map(String::as_str) {
+        Some("scan") => {
+            let path = args.get(2).context("用法: tm-watcher scan <path>")?;
+            cmd_scan(path)
+        }
+        _ => {
+            eprintln!("tm-watcher - macOS Time Machine 自动排除工具");
+            eprintln!();
+            eprintln!("用法:");
+            eprintln!("  tm-watcher scan <path>    扫描指定路径并排除匹配的目录");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_scan(path: &str) -> Result<()> {
+    let scan_path = PathBuf::from(expand_tilde(path));
+    if !scan_path.exists() {
+        anyhow::bail!("路径不存在: {}", scan_path.display());
     }
 
-    let command = &args[1];
+    // 加载配置（不存在时自动生成默认配置）
+    let config_path = default_config_path()?;
+    let config = Config::load_or_create(&config_path)?;
 
     // 初始化数据库
-    let db_path = dirs::data_local_dir()
-        .map(|p| p.join("tm-watcher/exclusions.db"))
-        .unwrap_or_else(|| {
-            eprintln!("错误: 无法获取本地数据目录");
-            process::exit(1);
-        });
-
+    let db_path = default_db_path()?;
     if let Some(parent) = db_path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent).unwrap_or_else(|e| {
-                eprintln!("错误: 无法创建数据库目录: {}", e);
-                process::exit(1);
-            });
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("无法创建数据目录: {}", parent.display()))?;
+    }
+    let database = Database::new(&db_path)?;
+
+    // 使用真实 tmutil 后端扫描
+    let scanner = Scanner::with_backend(config, database, Box::new(RealTmBackend::new()))?;
+
+    println!("扫描中: {}", scan_path.display());
+    let result = scanner.scan(&scan_path)?;
+
+    // 输出统计信息
+    println!();
+    println!("扫描完成:");
+    println!("  新排除: {} 个目录", result.excluded_count);
+    println!("  已跳过: {} 个目录（之前已排除）", result.skipped_count);
+    if !result.errors.is_empty() {
+        println!("  错误: {} 个", result.errors.len());
+        for err in &result.errors {
+            println!("    - {}", err);
         }
     }
 
-    let db = Database::new(&db_path).unwrap_or_else(|e| {
-        eprintln!("错误: 无法初始化数据库: {}", e);
-        process::exit(1);
-    });
-
-    match command.as_str() {
-        "scan" => handle_scan(&args, db),
-        "list" => handle_list(db),
-        "clean" => handle_clean(db),
-        "watch" => handle_watch(&args, db).await,
-        _ => {
-            eprintln!("错误: 未知命令 '{}'", command);
-            eprintln!("支持的命令: scan, list, clean, watch");
-            process::exit(1);
-        }
-    }
+    Ok(())
 }
 
-fn handle_scan(args: &[String], db: Database) {
-    if args.len() < 3 {
-        eprintln!("用法: tm-watcher scan <目录路径>");
-        process::exit(1);
-    }
-
-    let path = &args[2];
-    let scan_path = Path::new(path);
-
-    if !scan_path.exists() {
-        eprintln!("错误: 路径不存在: {}", path);
-        process::exit(1);
-    }
-
-    let rules = vec![
-        "node_modules".to_string(),
-        "target".to_string(),
-        ".venv".to_string(),
-        "__pycache__".to_string(),
-        "dist".to_string(),
-        "build".to_string(),
-    ];
-
-    let scanner = Scanner::new(db, rules, Box::new(RealTmUtil));
-
-    println!("开始扫描: {}", path);
-
-    match scanner.scan(scan_path) {
-        Ok(result) => {
-            println!("\n扫描完成！");
-            println!("  新排除目录: {}", result.excluded_count);
-            println!("  已记录跳过: {}", result.skipped_count);
-        }
-        Err(e) => {
-            eprintln!("错误: 扫描失败: {}", e);
-            process::exit(1);
-        }
-    }
+/// 默认配置文件路径: ~/.config/tm-watcher/config.toml
+fn default_config_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("无法获取用户主目录")?;
+    Ok(home.join(".config/tm-watcher/config.toml"))
 }
 
-fn handle_list(db: Database) {
-    match db.list_all() {
-        Ok(records) => {
-            if records.is_empty() {
-                println!("没有排除记录");
-                return;
-            }
-
-            println!("排除记录列表 ({} 条):\n", records.len());
-            println!("{:<50} {:<15} {:<10} {}", "路径", "规则", "大小", "创建时间");
-            println!("{}", "-".repeat(90));
-
-            for record in records {
-                println!(
-                    "{:<50} {:<15} {:>8.2} MB {}",
-                    &record.path,
-                    &record.rule,
-                    record.size_mb(),
-                    record.created_at_display()
-                );
-            }
-        }
-        Err(e) => {
-            eprintln!("错误: 无法读取记录: {}", e);
-            process::exit(1);
-        }
-    }
+/// 默认数据库路径: ~/.local/share/tm-watcher/exclusions.db
+fn default_db_path() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("无法获取用户主目录")?;
+    Ok(home.join(".local/share/tm-watcher/exclusions.db"))
 }
 
-fn handle_clean(db: Database) {
-    let cleaner = Cleaner::new(db, Box::new(RealTmUtil));
-
-    println!("开始清理...");
-
-    match cleaner.clean() {
-        Ok(stats) => {
-            println!("\n清理完成！");
-            println!("  已移除记录: {}", stats.removed_count);
-            println!("  已更新记录: {}", stats.updated_count);
-            if stats.error_count > 0 {
-                println!("  错误数量: {}", stats.error_count);
-                for err in stats.errors {
-                    eprintln!("    - {}", err);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("错误: 清理失败: {}", e);
-            process::exit(1);
-        }
+/// 展开路径中的 ~ 为用户主目录
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).to_string_lossy().into_owned();
     }
-}
-
-async fn handle_watch(args: &[String], db: Database) {
-    if args.len() < 3 {
-        eprintln!("用法: tm-watcher watch <目录路径>");
-        process::exit(1);
-    }
-
-    let path = &args[2];
-    let watch_path = Path::new(path);
-
-    if !watch_path.exists() {
-        eprintln!("错误: 路径不存在: {}", path);
-        process::exit(1);
-    }
-
-    let rules = vec![
-        "node_modules".to_string(),
-        "target".to_string(),
-        ".venv".to_string(),
-        "__pycache__".to_string(),
-        "dist".to_string(),
-        "build".to_string(),
-    ];
-
-    let rule_matcher = RuleMatcher::new(rules);
-    let watcher = Watcher::new(
-        db,
-        rule_matcher,
-        Arc::new(RealTmUtil),
-        Duration::from_secs(5),
-    );
-
-    // 设置 Ctrl+C 处理
-    let watcher_ref = &watcher;
-    tokio::select! {
-        result = watcher_ref.watch(watch_path) => {
-            if let Err(e) = result {
-                eprintln!("监控错误: {:?}", e);
-                process::exit(1);
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\n收到停止信号，正在退出...");
-        }
-    }
+    path.to_string()
 }

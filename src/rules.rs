@@ -1,27 +1,29 @@
-// ABOUTME: 规则匹配器，基于 basename 精确匹配目录
+// ABOUTME: 规则匹配引擎 - basename 精确匹配
 
 use std::path::Path;
 
 #[derive(Clone)]
 pub struct RuleMatcher {
-    exclude_rules: Vec<String>,
+    rules: Vec<String>,
 }
 
 impl RuleMatcher {
     pub fn new(rules: Vec<String>) -> Self {
-        Self {
-            exclude_rules: rules,
-        }
+        Self { rules }
     }
 
-    pub fn should_exclude(&self, path: &Path) -> Option<&str> {
-        if let Some(basename) = path.file_name() {
-            if let Some(basename_str) = basename.to_str() {
-                return self.exclude_rules.iter()
-                    .find(|rule| rule.as_str() == basename_str)
-                    .map(|s| s.as_str());
-            }
-        }
-        None
+    /// 检查路径的 basename 是否匹配任一规则
+    /// 返回匹配的规则，如果不匹配返回 None
+    pub fn matches(&self, path: &Path) -> Option<String> {
+        let basename = path.file_name()?.to_str()?;
+        self.matches_name(basename)
+    }
+
+    /// 检查目录名是否匹配任一规则（供并行遍历回调使用）
+    pub fn matches_name(&self, name: &str) -> Option<String> {
+        self.rules
+            .iter()
+            .find(|rule| rule.as_str() == name)
+            .cloned()
     }
 }
