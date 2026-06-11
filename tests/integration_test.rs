@@ -2,7 +2,7 @@
 
 use std::fs;
 use tempfile::TempDir;
-use tm_watcher::{Config, Database, Scanner};
+use tm_watcher::{Cleaner, Config, Database, Scanner, TmBackend, format_exclusion_list};
 
 #[test]
 fn test_scan_and_exclude_matching_dirs() {
@@ -55,6 +55,220 @@ fn test_scan_and_exclude_matching_dirs() {
     assert_eq!(excluded_paths.len(), 2);
     assert!(excluded_paths.contains(&node_modules));
     assert!(excluded_paths.contains(&target_dir));
+}
+
+#[test]
+fn test_database_rejects_old_schema_with_clear_message() {
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("old-schema.db");
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE excluded_directories (
+                id INTEGER PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                rule TEXT NOT NULL,
+                size_bytes INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO excluded_directories (path, rule, size_bytes, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "/tmp/old-node-modules",
+                "node_modules",
+                123_i64,
+                "2026-01-02 03:04:05"
+            ],
+        )
+        .unwrap();
+    }
+
+    let err = match Database::new(&db_path) {
+        Ok(_) => panic!("old schema should be rejected"),
+        Err(err) => err,
+    };
+
+    assert!(err.to_string().contains("schema 过旧"));
+    assert!(err.to_string().contains("last_checked_at"));
+    assert!(err.to_string().contains(&db_path.display().to_string()));
+}
+
+#[test]
+fn test_clean_deletes_missing_path_record_after_path_not_found_remove() {
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    let missing_path = db_dir.path().join("missing-node-modules");
+    database
+        .record_exclusion(&missing_path, "node_modules", Some(99))
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.fail_next_remove_path_not_found();
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+
+    assert_eq!(result.cleaned_count, 1);
+    assert_eq!(result.checked_count, 0);
+    assert!(result.errors.is_empty());
+    assert_eq!(tm_backend.remove_exclusion_call_count(), 1);
+    assert!(database.get_exclusions().unwrap().is_empty());
+}
+
+#[test]
+fn test_clean_updates_existing_path_size_and_last_checked_at() {
+    let temp_dir = TempDir::new().unwrap();
+    let excluded_path = temp_dir.path().join("target");
+    fs::create_dir_all(excluded_path.join("nested")).unwrap();
+    fs::write(excluded_path.join("a.bin"), [1_u8, 2, 3]).unwrap();
+    fs::write(excluded_path.join("nested/b.bin"), [4_u8, 5]).unwrap();
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&excluded_path, "target", None)
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.add_exclusion(&excluded_path).unwrap();
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(result.cleaned_count, 0);
+    assert_eq!(result.checked_count, 1);
+    assert!(result.errors.is_empty());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].size_bytes, Some(5));
+    assert!(records[0].last_checked_at.is_some());
+    assert_eq!(tm_backend.is_excluded_call_count(), 1);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_clean_does_not_follow_recorded_symlink() {
+    let temp_dir = TempDir::new().unwrap();
+    let real_path = temp_dir.path().join("real-target");
+    fs::create_dir_all(&real_path).unwrap();
+    fs::write(real_path.join("large.bin"), [0_u8; 64]).unwrap();
+
+    let symlink_path = temp_dir.path().join("node_modules");
+    std::os::unix::fs::symlink(&real_path, &symlink_path).unwrap();
+    let symlink_size = fs::symlink_metadata(&symlink_path).unwrap().len() as i64;
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&symlink_path, "node_modules", None)
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.add_exclusion(&symlink_path).unwrap();
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend));
+
+    let result = cleaner.clean().unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(result.cleaned_count, 0);
+    assert_eq!(result.checked_count, 1);
+    assert!(result.errors.is_empty());
+    assert_eq!(records[0].size_bytes, Some(symlink_size));
+    assert_ne!(records[0].size_bytes, Some(64));
+}
+
+#[test]
+fn test_clean_repairs_existing_path_missing_tm_exclusion() {
+    let temp_dir = TempDir::new().unwrap();
+    let excluded_path = temp_dir.path().join("node_modules");
+    fs::create_dir_all(&excluded_path).unwrap();
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&excluded_path, "node_modules", None)
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let cleaner = Cleaner::new(database, Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+
+    assert_eq!(result.cleaned_count, 0);
+    assert_eq!(result.checked_count, 1);
+    assert!(result.errors.is_empty());
+    assert_eq!(tm_backend.is_excluded_call_count(), 1);
+    assert_eq!(tm_backend.add_exclusion_call_count(), 1);
+    assert!(tm_backend.get_excluded_paths().contains(&excluded_path));
+}
+
+#[test]
+fn test_clean_records_error_and_continues_with_later_records() {
+    let temp_dir = TempDir::new().unwrap();
+    let missing_path = temp_dir.path().join("missing-node-modules");
+    let existing_path = temp_dir.path().join("target");
+    fs::create_dir_all(&existing_path).unwrap();
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&missing_path, "node_modules", None)
+        .unwrap();
+    database
+        .record_exclusion(&existing_path, "target", None)
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.fail_next_remove_other("boom");
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(result.cleaned_count, 0);
+    assert_eq!(result.checked_count, 1);
+    assert_eq!(result.errors.len(), 1);
+    assert!(result.errors[0].contains("boom"));
+    assert_eq!(records.len(), 2);
+    assert!(records[1].last_checked_at.is_some());
+    assert_eq!(tm_backend.remove_exclusion_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 1);
+}
+
+#[test]
+fn test_format_exclusion_list_reports_empty_database() {
+    let output = format_exclusion_list(&[]);
+
+    assert!(output.contains("没有排除记录"));
+}
+
+#[test]
+fn test_format_exclusion_list_includes_record_metadata() {
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    let excluded_path = db_dir.path().join("node_modules");
+    database
+        .record_exclusion(&excluded_path, "node_modules", Some(1_572_864))
+        .unwrap();
+
+    let records = database.get_exclusions().unwrap();
+    let output = format_exclusion_list(&records);
+
+    assert!(output.contains(&excluded_path.display().to_string()));
+    assert!(output.contains("node_modules"));
+    assert!(output.contains("1.50 MB"));
+    assert!(output.contains(&records[0].created_at));
 }
 
 #[test]

@@ -102,44 +102,50 @@ tm-watcher/
 
 ## 🎨 用户界面
 
-### CLI 命令
+### CLI 命令（按版本分组）
 
-#### 启动守护进程
-```bash
-tm-watcher start
-# 在后台启动监控服务
-```
+#### v0.1.0 - 已实现 ✅
 
-#### 停止守护进程
-```bash
-tm-watcher stop
-```
-
-#### 立即扫描
+**立即扫描**
 ```bash
 tm-watcher scan ~/Documents/src
 # 扫描指定目录并排除所有符合规则的子目录
 ```
 
-#### 立即清理
-```bash
-tm-watcher clean
-# 清理所有过期的排除规则
-```
-
-#### 查看状态
-```bash
-tm-watcher status
-# 显示：监控路径、已排除目录数量、最后清理时间
-```
-
-#### 列出已排除目录
+**列出已排除目录**
 ```bash
 tm-watcher list
 # 显示所有由本工具管理的排除目录
 ```
 
-#### 配置管理
+**立即清理**
+```bash
+tm-watcher clean
+# 清理所有过期的排除规则
+```
+
+#### v0.2.0 - 计划中
+
+**启动守护进程**
+```bash
+tm-watcher start
+# 在后台启动监控服务
+```
+
+**停止守护进程**
+```bash
+tm-watcher stop
+```
+
+**查看状态**
+```bash
+tm-watcher status
+# 显示：监控路径、已排除目录数量、最后清理时间
+```
+
+#### v0.4.0 - 计划中
+
+**配置管理**
 ```bash
 tm-watcher config --add-path ~/Projects
 tm-watcher config --add-rule "*.log"
@@ -157,14 +163,14 @@ tm-watcher config --show
 
 ### 配置示例
 ```toml
-# 监控路径列表
+# 监控路径列表（v0.1.0 读取，v0.2.0+ 守护进程监控）
 watch_paths = [
     "~/Documents/src",
     "~/Projects",
     "~/Code"
 ]
 
-# 排除规则（目录名或 glob 模式）
+# 排除规则（目录名精确匹配，v0.1.0 已支持）
 exclude_rules = [
     "node_modules",
     "target",
@@ -174,17 +180,21 @@ exclude_rules = [
     "__pycache__"
 ]
 
-# 清理策略
+# 清理策略（v0.2.0+）
 [cleanup]
 enabled = true
 interval_hours = 24        # 定期清理间隔
 cleanup_on_delete = true   # 检测到删除时立即清理
 
-# 行为配置
+# 行为配置（v0.2.0+）
 [behavior]
 confirmation_delay_seconds = 5    # 确认延迟
-min_directory_size_mb = 100       # 只排除大于此值的目录（可选）
+
+# 高级功能（v0.4.0+）
+# min_directory_size_mb = 100     # 只排除大于此值的目录（可选）
 ```
+
+**注：** v0.1.0 仅实现 `watch_paths` 和 `exclude_rules`，其他配置项为规划功能。
 
 ---
 
@@ -209,24 +219,35 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 
 ## 🚀 实现路线图
 
-### MVP (v0.1.0) - 核心功能
-- [x] 文件系统监控
-- [x] 自动排除 `node_modules`、`target`、`vendor`
-- [x] 基础 CLI（start/stop/scan）
+### MVP (v0.1.0) - 手动扫描与清理 ✅ **已完成**
+- [x] 配置系统与默认规则
+- [x] 规则匹配引擎
 - [x] SQLite 数据存储
-- [x] 定期清理（每 24 小时）
+- [x] tmutil 包装器
+- [x] 递归扫描与自动排除
+- [x] 基础 CLI（`scan` / `list` / `clean`）
+- [x] 失效记录清理与状态漂移修复
 
-### v0.2.0 - 智能化
-- [ ] 实时删除检测与清理
-- [ ] 目录大小过滤
+### v0.2.0 - 实时监控与守护进程
+- [ ] 文件系统监控（FSEvents API）
+- [ ] 目录创建延迟确认（5秒）
+- [ ] 目录删除实时清理
+- [ ] 守护进程模式（`start` / `stop` / `status`）
+- [ ] PID 文件与 SIGTERM 处理
+- [ ] 定期清理任务（每 24 小时）
+
+### v0.3.0 - 日志与可观测性
+- [ ] 集成 `tracing` 日志系统
+- [ ] CLI stderr 与 daemon log 文件分离
+- [ ] 操作审计日志
 - [ ] 用户通知（macOS 通知中心）
-- [ ] 日志查看命令
 
-### v0.3.0 - 可定制化
-- [ ] 完整配置系统
-- [ ] 自定义规则支持
+### v0.4.0 - 高级配置
+- [ ] 目录大小过滤（`min_directory_size_mb`）
 - [ ] 白名单机制（不排除某些特定目录）
+- [ ] 自定义规则支持（glob 模式）
 - [ ] 排除前预览与确认模式
+- [ ] 配置管理命令（`config --add-path` / `--add-rule`）
 
 ### v1.0.0 - 生产就绪
 - [ ] LaunchAgent 自动启动集成

@@ -1,8 +1,9 @@
 // ABOUTME: CLI 入口 - tm-watcher scan <path>
+// 更正：CLI 入口现在支持 tm-watcher scan/list/clean。
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use tm_watcher::{Config, Database, RealTmBackend, Scanner};
+use tm_watcher::{Cleaner, Config, Database, RealTmBackend, Scanner, format_exclusion_list};
 
 fn main() {
     if let Err(err) = run() {
@@ -19,11 +20,15 @@ fn run() -> Result<()> {
             let path = args.get(2).context("用法: tm-watcher scan <path>")?;
             cmd_scan(path)
         }
+        Some("list") => cmd_list(),
+        Some("clean") => cmd_clean(),
         _ => {
             eprintln!("tm-watcher - macOS Time Machine 自动排除工具");
             eprintln!();
             eprintln!("用法:");
             eprintln!("  tm-watcher scan <path>    扫描指定路径并排除匹配的目录");
+            eprintln!("  tm-watcher list           显示已记录的排除目录");
+            eprintln!("  tm-watcher clean          清理失效记录并检查排除状态");
             std::process::exit(1);
         }
     }
@@ -40,12 +45,7 @@ fn cmd_scan(path: &str) -> Result<()> {
     let config = Config::load_or_create(&config_path)?;
 
     // 初始化数据库
-    let db_path = default_db_path()?;
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("无法创建数据目录: {}", parent.display()))?;
-    }
-    let database = Database::new(&db_path)?;
+    let database = open_default_database()?;
 
     // 使用真实 tmutil 后端扫描
     let scanner = Scanner::with_backend(config, database, Box::new(RealTmBackend::new()))?;
@@ -66,6 +66,40 @@ fn cmd_scan(path: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn cmd_list() -> Result<()> {
+    let database = open_default_database()?;
+    let records = database.get_exclusions()?;
+    println!("{}", format_exclusion_list(&records));
+    Ok(())
+}
+
+fn cmd_clean() -> Result<()> {
+    let database = open_default_database()?;
+    let cleaner = Cleaner::new(database, Box::new(RealTmBackend::new()));
+    let result = cleaner.clean()?;
+
+    println!("清理完成:");
+    println!("  清理: {} 条记录", result.cleaned_count);
+    println!("  检查: {} 条记录", result.checked_count);
+    println!("  错误: {} 个", result.errors.len());
+    if !result.errors.is_empty() {
+        for err in &result.errors {
+            println!("    - {}", err);
+        }
+    }
+
+    Ok(())
+}
+
+fn open_default_database() -> Result<Database> {
+    let db_path = default_db_path()?;
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("无法创建数据目录: {}", parent.display()))?;
+    }
+    Database::new(&db_path)
 }
 
 /// 默认配置文件路径: ~/.config/tm-watcher/config.toml
