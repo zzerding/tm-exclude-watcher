@@ -10,4 +10,4 @@ pub use config::Config;
 pub use database::Database;
 pub use rules::RuleMatcher;
 pub use scanner::{ScanResult, Scanner};
-pub use tm_backend::{FakeTmBackend, TmBackend};
+pub use tm_backend::{FakeTmBackend, RealTmBackend, TmBackend};

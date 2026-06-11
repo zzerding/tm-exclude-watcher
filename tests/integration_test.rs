@@ -26,7 +26,10 @@ fn test_scan_and_exclude_matching_dirs() {
 
     // 配置规则
     let rules = vec!["node_modules".to_string(), "target".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     // 创建临时数据库
     let db_dir = TempDir::new().unwrap();
@@ -35,7 +38,8 @@ fn test_scan_and_exclude_matching_dirs() {
 
     // 使用 FakeTmBackend 执行扫描
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -64,14 +68,22 @@ fn test_idempotency_no_duplicate_records() {
 
     // 配置
     let rules = vec!["node_modules".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config.clone(), database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let scanner = Scanner::with_backend(
+        config.clone(),
+        database.clone(),
+        Box::new(tm_backend.clone()),
+    )
+    .unwrap();
 
     // 第一次扫描
     let result1 = scanner.scan(base_path).unwrap();
@@ -108,14 +120,18 @@ fn test_rule_matching_basename_only() {
 
     // 配置规则
     let rules = vec!["node_modules".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -147,14 +163,18 @@ fn test_non_matching_dirs_not_excluded() {
 
     // 配置规则（不包含 src/lib/docs）
     let rules = vec!["node_modules".to_string(), "target".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -187,14 +207,18 @@ fn test_symlinks_not_followed() {
 
     // 配置规则
     let rules = vec!["node_modules".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -238,14 +262,18 @@ fn test_permission_error_continues_scan() {
 
     // 配置规则
     let rules = vec!["node_modules".to_string(), "target".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
 
     let result = scanner.scan(base_path);
 
@@ -275,7 +303,10 @@ fn test_tm_not_configured_detected() {
     let database = Database::new(&db_path).unwrap();
 
     let rules = vec!["node_modules".to_string()];
-    let config = Config { exclude_rules: rules };
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
 
     // 断言：Scanner::with_backend() 返回错误
     let result = Scanner::with_backend(config, database, Box::new(tm_backend));
@@ -283,4 +314,40 @@ fn test_tm_not_configured_detected() {
     if let Err(err) = result {
         assert!(err.to_string().contains("Time Machine 未配置"));
     }
+}
+
+#[test]
+fn test_scan_result_reports_skipped_count() {
+    // 创建临时目录结构
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let node_modules = base_path.join("project1/node_modules");
+    fs::create_dir_all(&node_modules).unwrap();
+
+    let target_dir = base_path.join("project2/target");
+    fs::create_dir_all(&target_dir).unwrap();
+
+    let rules = vec!["node_modules".to_string(), "target".to_string()];
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    // 预先排除 node_modules（模拟之前已排除）
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    use tm_watcher::TmBackend;
+    tm_backend.add_exclusion(&node_modules).unwrap();
+
+    let scanner = Scanner::with_backend(config, database, Box::new(tm_backend)).unwrap();
+    let result = scanner.scan(base_path).unwrap();
+
+    // 断言：1 个新排除（target），1 个跳过（node_modules 已排除）
+    assert_eq!(result.excluded_count, 1);
+    assert_eq!(result.skipped_count, 1);
+    assert!(result.errors.is_empty());
 }

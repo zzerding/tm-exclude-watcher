@@ -1,7 +1,7 @@
 // ABOUTME: 数据库层 - SQLite 存储排除记录
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 

@@ -12,7 +12,12 @@ pub struct Scanner {
 }
 
 pub struct ScanResult {
+    /// 本次新排除的目录数量
     pub excluded_count: usize,
+    /// 已排除而跳过的目录数量
+    pub skipped_count: usize,
+    /// 扫描过程中遇到的错误（如权限不足）
+    pub errors: Vec<String>,
 }
 
 impl Scanner {
@@ -37,13 +42,17 @@ impl Scanner {
     /// 扫描指定路径，排除匹配的目录
     pub fn scan(&self, path: &Path) -> Result<ScanResult> {
         let mut excluded_count = 0;
+        let mut skipped_count = 0;
+        let mut errors = Vec::new();
 
         for entry in WalkDir::new(path).follow_links(false) {
             // 处理权限错误：记录但继续扫描
             let entry = match entry {
                 Ok(e) => e,
                 Err(err) => {
-                    eprintln!("警告: 跳过无法访问的路径: {}", err);
+                    let msg = format!("跳过无法访问的路径: {}", err);
+                    eprintln!("警告: {}", msg);
+                    errors.push(msg);
                     continue;
                 }
             };
@@ -58,7 +67,9 @@ impl Scanner {
             // 检查是否匹配规则
             if let Some(rule) = self.matcher.matches(entry_path) {
                 // 检查是否已排除（幂等性）
-                if !self.tm_backend.is_excluded(entry_path)? {
+                if self.tm_backend.is_excluded(entry_path)? {
+                    skipped_count += 1;
+                } else {
                     // 添加排除
                     self.tm_backend.add_exclusion(entry_path)?;
 
@@ -70,6 +81,10 @@ impl Scanner {
             }
         }
 
-        Ok(ScanResult { excluded_count })
+        Ok(ScanResult {
+            excluded_count,
+            skipped_count,
+            errors,
+        })
     }
 }
