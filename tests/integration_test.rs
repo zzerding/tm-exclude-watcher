@@ -88,13 +88,18 @@ fn test_idempotency_no_duplicate_records() {
     // 第一次扫描
     let result1 = scanner.scan(base_path).unwrap();
     assert_eq!(result1.excluded_count, 1);
+    assert_eq!(tm_backend.add_exclusion_call_count(), 1);
 
     // 第二次扫描（幂等性测试）
-    let scanner2 = Scanner::with_backend(config, database.clone(), Box::new(tm_backend)).unwrap();
+    let scanner2 =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
     let result2 = scanner2.scan(base_path).unwrap();
 
     // 断言：第二次扫描不应排除任何新目录
     assert_eq!(result2.excluded_count, 0);
+    assert_eq!(result2.skipped_count, 1);
+    assert_eq!(tm_backend.add_exclusion_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
 
     // 断言：数据库仍然只有 1 条记录
     let records = database.get_exclusions().unwrap();
@@ -338,15 +343,17 @@ fn test_scan_result_reports_skipped_count() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    // 预先排除 node_modules（模拟之前已排除）
+    // 预先记录 node_modules（模拟之前扫描过）
+    database
+        .record_exclusion(&node_modules, "node_modules", None)
+        .unwrap();
+
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    use tm_watcher::TmBackend;
-    tm_backend.add_exclusion(&node_modules).unwrap();
 
     let scanner = Scanner::with_backend(config, database, Box::new(tm_backend)).unwrap();
     let result = scanner.scan(base_path).unwrap();
 
-    // 断言：1 个新排除（target），1 个跳过（node_modules 已排除）
+    // 断言：1 个新排除（target），1 个跳过（node_modules 已记录）
     assert_eq!(result.excluded_count, 1);
     assert_eq!(result.skipped_count, 1);
     assert!(result.errors.is_empty());
@@ -416,10 +423,12 @@ fn test_pruning_also_skips_already_excluded_dirs() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    // 预先排除外层 node_modules（模拟之前扫描过）
+    // 预先记录外层 node_modules（模拟之前扫描过）
+    database
+        .record_exclusion(&outer, "node_modules", None)
+        .unwrap();
+
     let tm_backend = tm_watcher::FakeTmBackend::new();
-    use tm_watcher::TmBackend;
-    tm_backend.add_exclusion(&outer).unwrap();
 
     let scanner = Scanner::with_backend(config, database, Box::new(tm_backend.clone())).unwrap();
     let result = scanner.scan(base_path).unwrap();
@@ -430,6 +439,41 @@ fn test_pruning_also_skips_already_excluded_dirs() {
 
     let excluded_paths = tm_backend.get_excluded_paths();
     assert!(!excluded_paths.contains(&nested));
+}
+
+#[test]
+fn test_scan_trusts_database_record_without_tmutil_check() {
+    // 数据库已有记录时，scan 热路径不应再调用昂贵的 tmutil isexcluded
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let node_modules = base_path.join("project/node_modules");
+    fs::create_dir_all(&node_modules).unwrap();
+
+    let config = Config {
+        exclude_rules: vec!["node_modules".to_string()],
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&node_modules, "node_modules", None)
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner =
+        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(base_path).unwrap();
+
+    assert_eq!(result.excluded_count, 0);
+    assert_eq!(result.skipped_count, 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
+    assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+    assert!(tm_backend.get_excluded_paths().is_empty());
+    assert_eq!(database.get_exclusions().unwrap().len(), 1);
 }
 
 #[test]
