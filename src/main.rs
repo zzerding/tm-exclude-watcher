@@ -1,9 +1,12 @@
 // ABOUTME: CLI 入口 - tm-watcher scan <path>
 // 更正：CLI 入口现在支持 tm-watcher scan/list/clean。
+// 更新：现已支持 watch 子命令（Issue #3）。
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use tm_watcher::{Cleaner, Config, Database, RealTmBackend, Scanner, format_exclusion_list};
+use tm_watcher::{
+    Cleaner, Config, Database, RealTmBackend, Scanner, Watcher, format_exclusion_list,
+};
 
 fn main() {
     if let Err(err) = run() {
@@ -22,6 +25,10 @@ fn run() -> Result<()> {
         }
         Some("list") => cmd_list(),
         Some("clean") => cmd_clean(),
+        Some("watch") => {
+            let path = args.get(2).context("用法: tm-watcher watch <path>")?;
+            cmd_watch(path)
+        }
         _ => {
             eprintln!("tm-watcher - macOS Time Machine 自动排除工具");
             eprintln!();
@@ -29,6 +36,7 @@ fn run() -> Result<()> {
             eprintln!("  tm-watcher scan <path>    扫描指定路径并排除匹配的目录");
             eprintln!("  tm-watcher list           显示已记录的排除目录");
             eprintln!("  tm-watcher clean          清理失效记录并检查排除状态");
+            eprintln!("  tm-watcher watch <path>   实时监控路径并自动排除匹配目录");
             std::process::exit(1);
         }
     }
@@ -91,6 +99,22 @@ fn cmd_clean() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn cmd_watch(path: &str) -> Result<()> {
+    let watch_path = PathBuf::from(expand_tilde(path));
+    if !watch_path.exists() {
+        anyhow::bail!("路径不存在: {}", watch_path.display());
+    }
+
+    let config_path = default_config_path()?;
+    let config = Config::load_or_create(&config_path)?;
+
+    let database = open_default_database()?;
+
+    let watcher = Watcher::new(config, database, Box::new(RealTmBackend::new()))?;
+
+    tokio::runtime::Runtime::new()?.block_on(watcher.watch(&watch_path))
 }
 
 fn open_default_database() -> Result<Database> {

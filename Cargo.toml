@@ -11,6 +11,8 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 walkdir = "2.4"
 anyhow = "1.0"
 jwalk = "0.8.1"
+notify = "6.1"
+tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3.8"
