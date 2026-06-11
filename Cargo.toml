@@ -10,6 +10,7 @@ dirs = "5.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
 walkdir = "2.4"
 anyhow = "1.0"
+jwalk = "0.8.1"
 
 [dev-dependencies]
 tempfile = "3.8"

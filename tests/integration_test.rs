@@ -431,3 +431,33 @@ fn test_pruning_also_skips_already_excluded_dirs() {
     let excluded_paths = tm_backend.get_excluded_paths();
     assert!(!excluded_paths.contains(&nested));
 }
+
+#[test]
+fn test_scan_root_itself_matches_rule() {
+    // 扫描根目录本身就是 node_modules：只排除根，不深入子树
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().join("node_modules");
+    let nested = root.join("foo/node_modules");
+    fs::create_dir_all(&nested).unwrap();
+
+    let rules = vec!["node_modules".to_string()];
+    let config = Config {
+        exclude_rules: rules,
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let scanner = Scanner::with_backend(config, database, Box::new(tm_backend.clone())).unwrap();
+
+    let result = scanner.scan(&root).unwrap();
+
+    // 断言：只排除根目录自己
+    assert_eq!(result.excluded_count, 1);
+    let excluded_paths = tm_backend.get_excluded_paths();
+    assert!(excluded_paths.contains(&root));
+    assert!(!excluded_paths.contains(&nested));
+}
