@@ -32,6 +32,20 @@ impl Watcher {
     }
 
     pub async fn watch(&self, path: &Path) -> Result<()> {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            shutdown_tx.send(true).ok();
+        });
+        self.watch_multiple(&[path.to_path_buf()], shutdown_rx)
+            .await
+    }
+
+    pub async fn watch_multiple(
+        &self,
+        paths: &[PathBuf],
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<()> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
         let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| {
@@ -40,21 +54,29 @@ impl Watcher {
             }
         })?;
 
-        watcher
-            .watch(path, RecursiveMode::Recursive)
-            .context("无法启动文件系统监控")?;
+        for path in paths {
+            if path.exists() {
+                watcher
+                    .watch(path, RecursiveMode::Recursive)
+                    .context(format!("无法启动监控: {}", path.display()))?;
+                println!("开始监控: {}", path.display());
+            }
+        }
 
-        println!("开始监控: {}", path.display());
-        println!("按 Ctrl+C 停止监控");
+        if paths.iter().any(|p| p.exists()) {
+            println!("按 Ctrl+C 停止监控");
+        }
 
         loop {
             tokio::select! {
                 Some(event) = rx.recv() => {
                     self.handle_event(event).await;
                 }
-                _ = tokio::signal::ctrl_c() => {
-                    println!("\n正在停止监控...");
-                    break;
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        println!("\n正在停止监控...");
+                        break;
+                    }
                 }
             }
         }
@@ -395,5 +417,70 @@ mod tests {
         wait_for_add_count(&tm_backend, 1).await;
 
         assert!(!database.has_exclusion(&path).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_watch_multiple_handles_two_paths() {
+        // 简化：直接测试handle_create，不依赖真实FSEvents
+        let temp_dir = TempDir::new().unwrap();
+        let path1 = temp_dir.path().join("path1");
+        let path2 = temp_dir.path().join("path2");
+        std::fs::create_dir_all(&path1).unwrap();
+        std::fs::create_dir_all(&path2).unwrap();
+
+        let node1 = path1.join("node_modules");
+        let node2 = path2.join("node_modules");
+        std::fs::create_dir(&node1).unwrap();
+        std::fs::create_dir(&node2).unwrap();
+
+        let config = Config {
+            exclude_rules: vec!["node_modules".to_string()],
+            confirmation_delay_seconds: 0,
+            cleanup_on_delete: true,
+            ..Default::default()
+        };
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        let tm_backend = FakeTmBackend::new();
+
+        let watcher = Watcher::new(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+
+        // 直接调用handle_create模拟监控发现目录
+        watcher.handle_create(node1.clone()).await;
+        watcher.handle_create(node2.clone()).await;
+
+        // 等待异步排除完成
+        wait_for_add_count(&tm_backend, 2).await;
+
+        assert_eq!(tm_backend.add_exclusion_call_count(), 2);
+        assert!(database.has_exclusion(&node1).unwrap());
+        assert!(database.has_exclusion(&node2).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_watch_multiple_stops_on_shutdown_signal() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("test");
+        std::fs::create_dir(&path).unwrap();
+
+        let config = Config {
+            exclude_rules: vec!["node_modules".to_string()],
+            confirmation_delay_seconds: 0,
+            cleanup_on_delete: true,
+            ..Default::default()
+        };
+        let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
+        let tm_backend = FakeTmBackend::new();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        let watcher = Watcher::new(config, database, Box::new(tm_backend)).unwrap();
+        let watch_handle =
+            tokio::spawn(async move { watcher.watch_multiple(&[path], shutdown_rx).await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        shutdown_tx.send(true).ok();
+
+        let result = tokio::time::timeout(Duration::from_secs(2), watch_handle).await;
+        assert!(result.is_ok(), "watch_multiple 应在 shutdown 信号后返回");
     }
 }

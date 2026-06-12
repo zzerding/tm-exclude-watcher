@@ -2,7 +2,9 @@
 
 mod cleaner;
 mod config;
+mod daemon;
 mod database;
+mod launchd;
 mod list;
 mod rules;
 mod scanner;
@@ -11,6 +13,7 @@ mod watcher;
 
 pub use cleaner::{CleanResult, Cleaner};
 pub use config::Config;
+pub use daemon::{check_tm_configured, cmd_start, cmd_status, cmd_stop, run_periodic_cleanup};
 pub use database::{Database, ExclusionRecord};
 pub use list::format_exclusion_list;
 pub use rules::RuleMatcher;

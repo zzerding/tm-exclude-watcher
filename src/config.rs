@@ -18,6 +18,9 @@ pub struct Config {
     /// 删除目录时是否自动清理数据库记录
     #[serde(default = "default_cleanup_on_delete")]
     pub cleanup_on_delete: bool,
+    /// 定期清理间隔（小时）
+    #[serde(default = "default_interval_hours")]
+    pub interval_hours: u64,
 }
 
 fn default_confirmation_delay() -> u64 {
@@ -26,6 +29,10 @@ fn default_confirmation_delay() -> u64 {
 
 fn default_cleanup_on_delete() -> bool {
     true
+}
+
+fn default_interval_hours() -> u64 {
+    24
 }
 
 impl Config {
@@ -57,6 +64,7 @@ impl Config {
             .collect(),
             confirmation_delay_seconds: default_confirmation_delay(),
             cleanup_on_delete: default_cleanup_on_delete(),
+            interval_hours: default_interval_hours(),
         }
     }
 
@@ -67,6 +75,11 @@ impl Config {
                 .with_context(|| format!("无法读取配置文件: {}", path.display()))?;
             let config: Config = toml::from_str(&content)
                 .with_context(|| format!("配置文件格式错误: {}", path.display()))?;
+
+            if config.interval_hours == 0 {
+                anyhow::bail!("配置错误: interval_hours 不能为 0");
+            }
+
             return Ok(config);
         }
 
@@ -81,5 +94,52 @@ impl Config {
             .with_context(|| format!("无法写入配置文件: {}", path.display()))?;
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_config_loads_with_default_interval_hours() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        // 写入一个不包含 interval_hours 的旧配置
+        let old_config = r#"
+watch_paths = ["~/test"]
+exclude_rules = ["node_modules"]
+confirmation_delay_seconds = 5
+cleanup_on_delete = true
+"#;
+        std::fs::write(&config_path, old_config).unwrap();
+
+        let config = Config::load_or_create(&config_path).unwrap();
+        assert_eq!(config.interval_hours, 24);
+    }
+
+    #[test]
+    fn test_config_default_includes_interval_hours() {
+        let config = Config::default_config();
+        assert_eq!(config.interval_hours, 24);
+    }
+
+    #[test]
+    fn test_config_rejects_zero_interval_hours() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        let bad_config = r#"
+watch_paths = ["~/test"]
+exclude_rules = ["node_modules"]
+interval_hours = 0
+"#;
+        std::fs::write(&config_path, bad_config).unwrap();
+
+        let result = Config::load_or_create(&config_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("interval_hours"));
     }
 }
