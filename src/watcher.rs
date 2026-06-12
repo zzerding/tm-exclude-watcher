@@ -59,12 +59,12 @@ impl Watcher {
                 watcher
                     .watch(path, RecursiveMode::Recursive)
                     .context(format!("无法启动监控: {}", path.display()))?;
-                println!("开始监控: {}", path.display());
+                tracing::info!(path = %path.display(), "开始监控路径");
             }
         }
 
         if paths.iter().any(|p| p.exists()) {
-            println!("按 Ctrl+C 停止监控");
+            tracing::info!("监控已启动，等待停止信号");
         }
 
         loop {
@@ -74,7 +74,7 @@ impl Watcher {
                 }
                 _ = shutdown.changed() => {
                     if *shutdown.borrow() {
-                        println!("\n正在停止监控...");
+                        tracing::info!("正在停止监控");
                         break;
                     }
                 }
@@ -102,6 +102,8 @@ impl Watcher {
     }
 
     async fn handle_create(&self, path: PathBuf) {
+        tracing::debug!(path = %path.display(), "检测到目录创建事件");
+
         if !path.is_dir() || path.is_symlink() {
             return;
         }
@@ -156,14 +158,16 @@ impl Watcher {
                 .await;
 
                 match exclude_result {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(())) => {
+                        tracing::info!(path = %display_path, rule, "排除成功");
+                    }
                     Ok(Err(e)) => {
-                        eprintln!("⚠ 排除失败: {} - {}", display_path, e);
+                        tracing::warn!(path = %display_path, error = %e, "排除失败");
                         pending.lock().await.remove(&path_for_cleanup);
                         return;
                     }
                     Err(e) => {
-                        eprintln!("⚠ 排除任务失败: {} - {}", display_path, e);
+                        tracing::warn!(path = %display_path, error = %e, "排除任务失败");
                         pending.lock().await.remove(&path_for_cleanup);
                         return;
                     }
@@ -174,9 +178,13 @@ impl Watcher {
                         .await;
 
                 match record_result {
-                    Ok(Ok(())) => println!("✓ 已排除: {}", display_path),
-                    Ok(Err(e)) => eprintln!("⚠ 已排除但记录失败: {} - {}", display_path, e),
-                    Err(e) => eprintln!("⚠ 已排除但记录任务失败: {} - {}", display_path, e),
+                    Ok(Ok(())) => tracing::info!(path = %display_path, "排除记录写入成功"),
+                    Ok(Err(e)) => {
+                        tracing::warn!(path = %display_path, error = %e, "已排除但记录失败")
+                    }
+                    Err(e) => {
+                        tracing::warn!(path = %display_path, error = %e, "已排除但记录任务失败")
+                    }
                 }
 
                 pending.lock().await.remove(&path_for_cleanup);
@@ -189,7 +197,7 @@ impl Watcher {
     async fn handle_remove(&self, path: PathBuf) {
         if let Some(handle) = self.pending_exclusions.lock().await.remove(&path) {
             handle.abort();
-            println!("✗ 取消排除: {}", path.display());
+            tracing::info!(path = %path.display(), "取消待执行排除");
             return;
         }
 
@@ -217,7 +225,7 @@ impl Watcher {
             move || db.delete_exclusion(&path)
         })
         .await;
-        println!("🗑 清理记录: {}", display_path);
+        tracing::info!(path = %display_path, "已清理删除目录的排除记录");
     }
 
     async fn has_pending_exclusion_for_self_or_ancestor(&self, path: &Path) -> bool {
@@ -237,7 +245,7 @@ impl Watcher {
         for nested_path in nested_paths {
             if let Some(handle) = pending.remove(&nested_path) {
                 handle.abort();
-                println!("✗ 取消嵌套排除: {}", nested_path.display());
+                tracing::info!(path = %nested_path.display(), "取消嵌套待执行排除");
             }
         }
     }

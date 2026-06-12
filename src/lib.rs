@@ -6,6 +6,7 @@ mod daemon;
 mod database;
 mod launchd;
 mod list;
+pub mod logging;
 mod rules;
 mod scanner;
 mod tm_backend;

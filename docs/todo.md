@@ -10,14 +10,11 @@
 - [x] Issue #2：查看和手动清理，包含失效记录清理、大小刷新和状态漂移修正。
 - [x] Issue #3：实时目录监控，包含 `watch` / `watch_multiple`、延迟确认、删除取消和多路径监控。
 - [x] Issue #4：守护进程生命周期已重构为 launchd 托管。
+- [x] Issue #5：日志和可观测性，包含 tracing 初始化、CLI/daemon 日志分流和关键操作日志。
 - [x] 根目录遗留计划文档已清理，长期文档已归类到 `docs/`。
 - [x] 项目本地 skill 已移动到 `skills/stacked-issue-pr-workflow/`。
 
 ## 剩余待办
-
-- [ ] Issue #5：日志和可观测性。
-  - 当前代码仍以 `println!` / `eprintln!` 和 launchd stdout/stderr 重定向为主。
-  - `Cargo.toml` 尚未引入 `tracing` / `tracing-subscriber`。
 
 - [ ] Issue #6：端到端测试与发布准备。
   - 需要真实 macOS/Time Machine 环境验证 `start` / `stop` / `status`。

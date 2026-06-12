@@ -34,9 +34,23 @@ impl Cleaner {
             match self.clean_one(&record.path) {
                 Ok(CleanAction::Cleaned) => cleaned_count += 1,
                 Ok(CleanAction::Checked) => checked_count += 1,
-                Err(err) => errors.push(format!("{}: {}", record.path.display(), err)),
+                Err(err) => {
+                    tracing::warn!(
+                        path = %record.path.display(),
+                        error = %err,
+                        "清理记录时遇到错误"
+                    );
+                    errors.push(format!("{}: {}", record.path.display(), err));
+                }
             }
         }
+
+        tracing::info!(
+            cleaned_count,
+            checked_count,
+            error_count = errors.len(),
+            "清理完成"
+        );
 
         Ok(CleanResult {
             cleaned_count,
@@ -58,6 +72,7 @@ impl Cleaner {
         let size_bytes = record_size(path, &metadata)?;
         self.database.update_exclusion_check(path, size_bytes)?;
         if !self.tm_backend.is_excluded(path)? {
+            tracing::warn!(path = %path.display(), "排除状态缺失，正在修复");
             self.tm_backend.add_exclusion(path)?;
         }
 
@@ -73,6 +88,7 @@ impl Cleaner {
         }
 
         self.database.delete_exclusion(path)?;
+        tracing::info!(path = %path.display(), "已清理失效排除记录");
         Ok(())
     }
 }

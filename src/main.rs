@@ -4,14 +4,31 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tm_watcher::{
     Cleaner, Config, Database, RealTmBackend, Scanner, Watcher, check_tm_configured, cmd_start,
-    cmd_status, cmd_stop, format_exclusion_list,
+    cmd_status, cmd_stop, format_exclusion_list, logging,
 };
 
 fn main() {
+    let is_daemon = std::env::args().nth(1).as_deref() == Some("__daemon");
+    let _logging_guard = match init_logging(is_daemon) {
+        Ok(guard) => guard,
+        Err(err) => {
+            eprintln!("错误: {}", err);
+            std::process::exit(1);
+        }
+    };
+
     if let Err(err) = run() {
-        eprintln!("错误: {}", err);
+        tracing::error!("错误: {:#}", err);
         std::process::exit(1);
     }
+}
+
+fn init_logging(is_daemon: bool) -> Result<logging::LoggingGuard> {
+    if is_daemon {
+        return logging::init_daemon(&default_log_path()?);
+    }
+
+    logging::init_cli()
 }
 
 fn run() -> Result<()> {
@@ -187,21 +204,21 @@ fn cmd_daemon_wrapper() -> Result<()> {
     // 检查 Time Machine 是否配置
     check_tm_configured(tm_backend.as_ref())?;
 
-    println!("守护进程启动中...");
-    println!("配置文件: {}", config_path.display());
-    println!("数据库: {}", default_db_path()?.display());
+    tracing::info!("守护进程启动中");
+    tracing::info!(path = %config_path.display(), "加载配置文件");
+    tracing::info!(path = %default_db_path()?.display(), "打开数据库");
 
     // 设置 shutdown 信号
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     tokio::runtime::Runtime::new()?.block_on(async move {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("无法注册 SIGTERM 处理器")?;
+
         // 处理 SIGTERM
         tokio::spawn(async move {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .unwrap()
-                .recv()
-                .await;
-            println!("收到停止信号，正在退出...");
+            sigterm.recv().await;
+            tracing::info!("收到 SIGTERM，正在退出");
             shutdown_tx.send(true).ok();
         });
 

@@ -52,6 +52,13 @@ impl Scanner {
         // 边界：扫描根目录本身就匹配规则时，直接处理并返回（无需遍历子树）
         if let Some(rule) = self.matcher.matches(path) {
             self.exclude_one(path, &rule, &mut excluded_count, &mut skipped_count)?;
+            tracing::info!(
+                path = %path.display(),
+                excluded_count,
+                skipped_count,
+                error_count = errors.len(),
+                "扫描完成"
+            );
             return Ok(ScanResult {
                 excluded_count,
                 skipped_count,
@@ -83,7 +90,7 @@ impl Scanner {
                 Ok(e) => e,
                 Err(err) => {
                     let msg = format!("跳过无法访问的路径: {}", err);
-                    eprintln!("警告: {}", msg);
+                    tracing::warn!(error = %err, "跳过无法访问的路径");
                     errors.push(msg);
                     continue;
                 }
@@ -101,6 +108,14 @@ impl Scanner {
                 self.exclude_one(&entry_path, &rule, &mut excluded_count, &mut skipped_count)?;
             }
         }
+
+        tracing::info!(
+            path = %path.display(),
+            excluded_count,
+            skipped_count,
+            error_count = errors.len(),
+            "扫描完成"
+        );
 
         Ok(ScanResult {
             excluded_count,
@@ -127,6 +142,7 @@ impl Scanner {
         self.tm_backend.add_exclusion(path)?;
         self.database.record_exclusion(path, rule, None)?;
         *excluded_count += 1;
+        tracing::info!(path = %path.display(), rule, "已排除扫描匹配目录");
         Ok(())
     }
 }

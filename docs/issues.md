@@ -80,6 +80,23 @@
 无 — 可与其他切片并行
 ```
 
+### 当前实现
+
+- 已新增 `tracing` / `tracing-subscriber` / `tracing-appender`。
+- CLI 模式初始化 INFO 级别 stderr 日志；守护进程模式写入 `~/.local/share/tm-watcher/daemon.log`。
+- `scanner` / `cleaner` / `watcher` / `daemon` 已添加排除、扫描完成、清理完成、监控启动、错误与 shutdown 日志。
+- 顶层 `main()` 捕获错误并记录日志后退出。
+- 生产路径中已移除 SIGTERM 注册和数据库非 UTF-8 路径处理的 panic 风险。
+
+### 验收状态
+
+- [x] 初始化 tracing-subscriber，CLI 模式输出到 stderr，守护进程模式输出到 `~/.local/share/tm-watcher/daemon.log`。
+- [x] 关键模块添加适当级别日志；当前仓库无 `exclusion.rs`，排除日志落在 `scanner.rs`、`watcher.rs` 和 `cleaner.rs`。
+- [x] CLI 命令运行时日志输出到 stderr 可见。
+- [x] 守护进程日志持久化到文件，使用 `tracing-appender` writer。
+- [x] 错误场景有清晰日志记录（权限/访问失败、Time Machine 未配置、tmutil 调用失败）。
+- [x] 生产路径 panic 风险改为返回 `Result`，顶层捕获错误并记录日志后退出。
+
 ---
 
 ## Issue #6: 端到端测试与发布准备（E2E testing and release polish）

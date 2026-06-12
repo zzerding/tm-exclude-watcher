@@ -1,6 +1,6 @@
 // ABOUTME: 数据库层 - SQLite 存储排除记录
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -48,20 +48,22 @@ impl Database {
 
     /// 记录排除目录（幂等：路径已存在则忽略）
     pub fn record_exclusion(&self, path: &Path, rule: &str, size: Option<i64>) -> Result<()> {
+        let path_text = path_for_database(path)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO excluded_directories (path, rule, size_bytes) VALUES (?, ?, ?)",
-            params![path.to_str().unwrap(), rule, size],
+            params![path_text, rule, size],
         )?;
         Ok(())
     }
 
     /// 检查路径是否已有排除记录
     pub fn has_exclusion(&self, path: &Path) -> Result<bool> {
+        let path_text = path_for_database(path)?;
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM excluded_directories WHERE path = ?",
-            params![path.to_str().unwrap()],
+            params![path_text],
             |row| row.get(0),
         )?;
         Ok(count > 0)
@@ -69,22 +71,24 @@ impl Database {
 
     /// 删除指定路径的排除记录
     pub fn delete_exclusion(&self, path: &Path) -> Result<()> {
+        let path_text = path_for_database(path)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM excluded_directories WHERE path = ?",
-            params![path.to_str().unwrap()],
+            params![path_text],
         )?;
         Ok(())
     }
 
     /// 更新排除记录的大小和最近检查时间
     pub fn update_exclusion_check(&self, path: &Path, size_bytes: i64) -> Result<()> {
+        let path_text = path_for_database(path)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE excluded_directories
              SET size_bytes = ?, last_checked_at = CURRENT_TIMESTAMP
              WHERE path = ?",
-            params![size_bytes, path.to_str().unwrap()],
+            params![size_bytes, path_text],
         )?;
         Ok(())
     }
@@ -154,6 +158,11 @@ fn validate_schema(conn: &Connection, db_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn path_for_database(path: &Path) -> Result<&str> {
+    path.to_str()
+        .with_context(|| format!("数据库路径不是有效 UTF-8: {}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +206,22 @@ mod tests {
             database.last_cleanup_time().unwrap(),
             Some("2026-06-11 15:30:22".to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_path_returns_error_instead_of_panicking() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let database = Database::new(&db_path).unwrap();
+        let path = PathBuf::from(OsString::from_vec(vec![0xff]));
+
+        let result = database.record_exclusion(&path, "node_modules", None);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("UTF-8"));
     }
 }
