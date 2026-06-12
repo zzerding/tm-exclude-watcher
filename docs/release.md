@@ -76,6 +76,10 @@ SHA256SUMS
 - stable 发布时额外执行 Homebrew tap 更新步骤。
 - Cargo 构建缓存使用成熟 action，例如 `Swatinem/rust-cache`，不要手写复杂 cache key。
 
+当前 GitHub Release 资产切片先接入 macOS tarball 发布链路，不更新 Homebrew tap。
+workflow 使用 `cargo-dist` 生成 tarball 和 checksum，再按本项目资产策略将文件名规范化为带版本号的 tarball 和聚合 `SHA256SUMS`。
+Homebrew tap 更新由后续 stable 发布切片接入。
+
 发布门禁：
 
 ```bash
@@ -93,11 +97,11 @@ GitHub Actions 不执行真实 `tmutil` 或 LaunchAgent E2E。
 当前发布链路使用：
 
 ```text
-x86_64-apple-darwin  -> macos-14
-aarch64-apple-darwin -> macos-14-arm64
+x86_64-apple-darwin  -> macos-15-intel
+aarch64-apple-darwin -> macos-15
 ```
 
-`macos-14` / `macos-14-arm64` 是短期选择。GitHub 已公告该镜像会在 2026-07-06 开始 deprecate，并在 2026-11-02 停止支持。后续需要迁移到 `macos-15` 系列 runner。
+使用 `macos-15` 系列 runner，避免依赖已进入迁移窗口的 `macos-14` 标签。
 
 ## Homebrew tap
 

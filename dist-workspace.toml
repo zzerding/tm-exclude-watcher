@@ -1,0 +1,22 @@
+# ABOUTME: Configures cargo-dist to build the tm-watcher macOS release artifacts.
+
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+allow-dirty = ["ci"]
+ci = "github"
+hosting = "github"
+installers = []
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]
+unix-archive = ".tar.gz"
+source-tarball = false
+pr-run-mode = "plan"
+
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+x86_64-apple-darwin = "macos-15-intel"
