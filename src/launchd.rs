@@ -94,6 +94,28 @@ pub fn bootout() -> Result<()> {
     Ok(())
 }
 
+/// 检查 LaunchAgent 是否已加载（无论是否有运行中的 PID）
+pub fn is_loaded() -> bool {
+    let uid = unsafe { libc::getuid() };
+    let target = format!("gui/{}/{}", uid, LABEL);
+
+    Command::new("launchctl")
+        .args(["print", &target])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// 如果 LaunchAgent 已加载则卸载，返回是否执行了卸载操作
+pub fn bootout_if_loaded() -> Result<bool> {
+    if !is_loaded() {
+        return Ok(false);
+    }
+
+    bootout()?;
+    Ok(true)
+}
+
 /// 查询守护进程状态,返回 PID(运行中)或 None(未运行)
 pub fn query_status() -> Option<u32> {
     let uid = unsafe { libc::getuid() };
@@ -202,6 +224,16 @@ mod tests {
     #[test]
     fn test_parse_launchctl_print_not_running() {
         let sample = "service not found";
+        assert_eq!(parse_launchctl_print(sample), None);
+    }
+
+    #[test]
+    fn test_parse_launchctl_print_loaded_without_pid() {
+        let sample = r#"com.zzerding.tm-watcher = {
+    active count = 0
+    path = /Users/test/Library/LaunchAgents/com.zzerding.tm-watcher.plist
+    state = waiting
+}"#;
         assert_eq!(parse_launchctl_print(sample), None);
     }
 
