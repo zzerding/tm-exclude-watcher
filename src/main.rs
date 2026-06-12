@@ -35,6 +35,14 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     match args.get(1).map(String::as_str) {
+        Some("--version") | Some("-V") => {
+            println!("tm-watcher {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        Some("--help") | Some("-h") => {
+            print!("{HELP_TEXT}");
+            Ok(())
+        }
         Some("scan") => {
             let path = args.get(2).context("用法: tm-watcher scan <path>")?;
             cmd_scan(path)
@@ -50,20 +58,23 @@ fn run() -> Result<()> {
         Some("status") => cmd_status_wrapper(),
         Some("__daemon") => cmd_daemon_wrapper(),
         _ => {
-            eprintln!("tm-watcher - macOS Time Machine 自动排除工具");
-            eprintln!();
-            eprintln!("用法:");
-            eprintln!("  tm-watcher scan <path>    扫描指定路径并排除匹配的目录");
-            eprintln!("  tm-watcher list           显示已记录的排除目录");
-            eprintln!("  tm-watcher clean          清理失效记录并检查排除状态");
-            eprintln!("  tm-watcher watch <path>   实时监控路径并自动排除匹配目录");
-            eprintln!("  tm-watcher start          启动守护进程（后台监控+定期清理）");
-            eprintln!("  tm-watcher stop           停止守护进程");
-            eprintln!("  tm-watcher status         显示守护进程状态");
+            eprint!("{HELP_TEXT}");
             std::process::exit(1);
         }
     }
 }
+
+const HELP_TEXT: &str = "tm-watcher - macOS Time Machine 自动排除工具
+
+用法:
+  tm-watcher scan <path>    扫描指定路径并排除匹配的目录
+  tm-watcher list           显示已记录的排除目录
+  tm-watcher clean          清理失效记录并检查排除状态
+  tm-watcher watch <path>   实时监控路径并自动排除匹配目录
+  tm-watcher start          启动守护进程（后台监控+定期清理）
+  tm-watcher stop           停止守护进程
+  tm-watcher status         显示守护进程状态
+";
 
 fn cmd_scan(path: &str) -> Result<()> {
     let scan_path = PathBuf::from(expand_tilde(path));

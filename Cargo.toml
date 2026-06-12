@@ -2,6 +2,9 @@
 name = "tm-watcher"
 version = "0.2.0-rc.1"
 edition = "2024"
+description = "Automatically manage macOS Time Machine exclusions for development directories"
+repository = "https://github.com/zzerding/tm-exclude-watcher"
+license = "MIT"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
