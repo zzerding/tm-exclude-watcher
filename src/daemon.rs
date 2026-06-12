@@ -285,6 +285,8 @@ pub fn cmd_stop() -> Result<()> {
 pub fn cmd_status(config: &crate::Config, database: &Database) -> Result<()> {
     use crate::launchd;
 
+    warn_if_launch_agent_uses_stale_binary();
+
     // 检查运行状态
     let running = if let Some(pid) = launchd::query_status() {
         println!("状态: 运行中 (PID: {})", pid);
@@ -314,6 +316,23 @@ pub fn cmd_status(config: &crate::Config, database: &Database) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn warn_if_launch_agent_uses_stale_binary() {
+    let Some(configured_path) = crate::launchd::configured_program_path() else {
+        return;
+    };
+    let Ok(current_path) = std::env::current_exe() else {
+        return;
+    };
+
+    if configured_path != current_path {
+        println!("警告: LaunchAgent 仍指向旧的 tm-watcher 二进制路径");
+        println!("  旧路径: {}", configured_path.display());
+        println!("  当前路径: {}", current_path.display());
+        println!("  修复: tm-watcher stop && tm-watcher start");
+        println!();
+    }
 }
 
 /// 展开路径中的 ~ 为用户主目录

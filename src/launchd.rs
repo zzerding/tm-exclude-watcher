@@ -57,6 +57,13 @@ pub fn plist_path() -> Result<PathBuf> {
         .join(format!("{}.plist", LABEL)))
 }
 
+/// 读取 LaunchAgent plist 中记录的可执行文件路径
+pub fn configured_program_path() -> Option<PathBuf> {
+    let path = plist_path().ok()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_program_arguments_path(&content).map(PathBuf::from)
+}
+
 /// launchctl bootstrap
 pub fn bootstrap(plist: &Path) -> Result<()> {
     let uid = unsafe { libc::getuid() };
@@ -145,6 +152,22 @@ fn parse_launchctl_print(output: &str) -> Option<u32> {
         }
     }
     None
+}
+
+fn parse_program_arguments_path(plist: &str) -> Option<String> {
+    let (_, rest) = plist.split_once("<key>ProgramArguments</key>")?;
+    let (_, rest) = rest.split_once("<array>")?;
+    let (_, rest) = rest.split_once("<string>")?;
+    let (path, _) = rest.split_once("</string>")?;
+    Some(xml_unescape(path))
+}
+
+fn xml_unescape(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]
@@ -245,5 +268,36 @@ mod tests {
             path.to_string_lossy()
                 .ends_with("com.zzerding.tm-watcher.plist")
         );
+    }
+
+    #[test]
+    fn test_parse_program_arguments_path_reads_first_argument() {
+        let plist = generate_plist(
+            Path::new("/usr/local/bin/tm-watcher"),
+            Path::new("/var/log/daemon.log"),
+        );
+
+        assert_eq!(
+            parse_program_arguments_path(&plist).as_deref(),
+            Some("/usr/local/bin/tm-watcher")
+        );
+    }
+
+    #[test]
+    fn test_parse_program_arguments_path_unescapes_xml_entities() {
+        let plist = generate_plist(
+            Path::new("/path/with'quote&space/tm-watcher"),
+            Path::new("/var/log/daemon.log"),
+        );
+
+        assert_eq!(
+            parse_program_arguments_path(&plist).as_deref(),
+            Some("/path/with'quote&space/tm-watcher")
+        );
+    }
+
+    #[test]
+    fn test_parse_program_arguments_path_missing_arguments() {
+        assert_eq!(parse_program_arguments_path("<plist></plist>"), None);
     }
 }
