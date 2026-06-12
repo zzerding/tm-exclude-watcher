@@ -59,13 +59,12 @@ tm-watcher list
 输出示例：
 
 ```
-已排除的目录 (3 条记录):
+排除记录: 3 条，已知大小合计 2.4 GB，未知大小 1 条
 
-1. /Users/biz/Code/project-a/node_modules
-   规则: node_modules | 大小: 145.2 MB | 最后检查: 2026-06-11 10:30:15
-
-2. /Users/biz/Code/project-b/target
-   规则: target | 大小: 2.3 GB | 最后检查: 2026-06-11 10:30:16
+#  大小      规则          检查时间          路径
+1  2.3 GB    target        2026-06-11 10:30  ~/Code/project-b/target
+2  145.2 MB  node_modules  2026-06-11 10:30  ~/Code/project-a/node_modules
+3  未知      vendor        未检查            ~/Code/project-c/vendor
 ```
 
 ### 清理失效记录

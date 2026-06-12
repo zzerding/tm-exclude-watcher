@@ -1,6 +1,7 @@
 // ABOUTME: 集成测试 - 验证扫描、排除、数据库记录的端到端行为
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tm_watcher::{Cleaner, Config, Database, Scanner, TmBackend, format_exclusion_list};
 
@@ -249,26 +250,117 @@ fn test_clean_records_error_and_continues_with_later_records() {
 fn test_format_exclusion_list_reports_empty_database() {
     let output = format_exclusion_list(&[]);
 
-    assert!(output.contains("没有排除记录"));
+    assert_eq!(output, "没有排除记录。");
 }
 
 #[test]
-fn test_format_exclusion_list_includes_record_metadata() {
-    let db_dir = TempDir::new().unwrap();
-    let db_path = db_dir.path().join("test.db");
-    let database = Database::new(&db_path).unwrap();
-    let excluded_path = db_dir.path().join("node_modules");
-    database
-        .record_exclusion(&excluded_path, "node_modules", Some(1_572_864))
-        .unwrap();
+fn test_format_exclusion_list_prints_compact_inspection_table() {
+    let home_dir = dirs::home_dir().unwrap();
+    let records = vec![
+        exclusion_record(
+            home_dir.join("Code/project-a/node_modules"),
+            "node_modules",
+            Some(512 * 1024 * 1024),
+            Some("2026-06-10 08:05:59"),
+        ),
+        exclusion_record(
+            home_dir.join("Code/project-b/target"),
+            "target",
+            Some(2 * 1024 * 1024 * 1024),
+            Some("2026-06-11 10:30:16"),
+        ),
+        exclusion_record(
+            home_dir.join("Code/project-c/.cache"),
+            ".cache",
+            Some(999),
+            None,
+        ),
+        exclusion_record("/var/tmp/project/vendor", "vendor", None, None),
+    ];
 
-    let records = database.get_exclusions().unwrap();
+    let output = format_exclusion_list(&records);
+    let expected = "\
+排除记录: 4 条，已知大小合计 2.5 GB，未知大小 1 条
+
+#  大小    规则          检查时间          路径
+1  2 GB    target        2026-06-11 10:30  ~/Code/project-b/target
+2  512 MB  node_modules  2026-06-10 08:05  ~/Code/project-a/node_modules
+3  999 B   .cache        未检查            ~/Code/project-c/.cache
+4  未知    vendor        未检查            /var/tmp/project/vendor
+";
+
+    assert_eq!(output, expected);
+    assert!(!output.contains("10:30:16"));
+}
+
+#[test]
+fn test_format_exclusion_list_sorts_by_size_with_predictable_ties() {
+    let records = vec![
+        exclusion_record("/tmp/unknown-z", "vendor", None, None),
+        exclusion_record("/tmp/known-b", "target", Some(1024), None),
+        exclusion_record("/tmp/known-a", "node_modules", Some(1024), None),
+        exclusion_record("/tmp/largest", "target", Some(2048), None),
+        exclusion_record("/tmp/unknown-y", "vendor", None, None),
+    ];
+
     let output = format_exclusion_list(&records);
 
-    assert!(output.contains(&excluded_path.display().to_string()));
-    assert!(output.contains("node_modules"));
-    assert!(output.contains("1.50 MB"));
-    assert!(output.contains(&records[0].created_at));
+    assert_in_order(
+        &output,
+        &[
+            "/tmp/largest",
+            "/tmp/known-a",
+            "/tmp/known-b",
+            "/tmp/unknown-y",
+            "/tmp/unknown-z",
+        ],
+    );
+}
+
+#[test]
+fn test_format_exclusion_list_uses_automatic_size_units() {
+    let records = vec![
+        exclusion_record("/tmp/zero", "cache", Some(0), None),
+        exclusion_record("/tmp/bytes", "cache", Some(999), None),
+        exclusion_record("/tmp/kb", "cache", Some(1024), None),
+        exclusion_record("/tmp/mb", "cache", Some(1536 * 1024), None),
+        exclusion_record("/tmp/gb", "cache", Some(2355 * 1024 * 1024), None),
+        exclusion_record("/tmp/tb", "cache", Some(1024_i64.pow(4)), None),
+    ];
+
+    let output = format_exclusion_list(&records);
+
+    assert!(output.contains("0 B"));
+    assert!(output.contains("999 B"));
+    assert!(output.contains("1 KB"));
+    assert!(output.contains("1.5 MB"));
+    assert!(output.contains("2.3 GB"));
+    assert!(output.contains("1 TB"));
+}
+
+fn exclusion_record(
+    path: impl AsRef<Path>,
+    rule: &str,
+    size_bytes: Option<i64>,
+    last_checked_at: Option<&str>,
+) -> tm_watcher::ExclusionRecord {
+    tm_watcher::ExclusionRecord {
+        path: PathBuf::from(path.as_ref()),
+        rule: rule.to_string(),
+        size_bytes,
+        created_at: "2026-06-01 00:00:00".to_string(),
+        last_checked_at: last_checked_at.map(str::to_string),
+    }
+}
+
+fn assert_in_order(haystack: &str, needles: &[&str]) {
+    let mut previous_position = 0;
+    for needle in needles {
+        let position = haystack[previous_position..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing expected text: {needle}"));
+        previous_position += position + needle.len();
+    }
 }
 
 #[test]
