@@ -474,9 +474,8 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let watcher = Watcher::new(config, database, Box::new(tm_backend)).unwrap();
-        let watch_handle = tokio::spawn(async move {
-            watcher.watch_multiple(&[path], shutdown_rx).await
-        });
+        let watch_handle =
+            tokio::spawn(async move { watcher.watch_multiple(&[path], shutdown_rx).await });
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         shutdown_tx.send(true).ok();

@@ -85,6 +85,31 @@ tm-watcher clean
   错误: 0 个
 ```
 
+### 守护进程模式
+
+启动守护进程,自动监控配置的路径并定期清理失效记录:
+
+```bash
+# 启动
+tm-watcher start
+
+# 查看状态
+tm-watcher status
+
+# 停止
+tm-watcher stop
+```
+
+**特性:**
+- **登录自启:** 守护进程在用户登录时自动启动(macOS LaunchAgent)
+- **崩溃重启:** 异常退出时自动重启,正常退出(stop 命令)不会拉起
+- **日志路径:** `~/.local/share/tm-watcher/daemon.log`
+
+**开发者注意:**
+- plist 指向 `current_exe()` 绝对路径,开发模式下是 `target/debug/tm-watcher`
+- `cargo clean` 后需重新执行 `tm-watcher start`
+- 旧版本升级用户需先用旧二进制执行 `stop` 停止旧守护进程
+
 ## 配置
 
 配置文件位于 `~/.config/tm-watcher/config.toml`，首次运行时自动生成。

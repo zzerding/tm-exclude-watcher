@@ -1,76 +1,10 @@
-// ABOUTME: 守护进程管理 - PID 文件、后台启动、信号处理、状态查询
+// ABOUTME: 守护进程管理 - 定期清理、TM 预检
 
 use anyhow::{Context, Result};
 use std::path::Path;
 
-use crate::TmBackend;
 use crate::Database;
-
-/// 将 PID 写入文件
-pub fn write_pid_file(pid: u32, path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("无法创建 PID 目录: {}", parent.display()))?;
-    }
-    std::fs::write(path, pid.to_string())
-        .with_context(|| format!("无法写入 PID 文件: {}", path.display()))?;
-    Ok(())
-}
-
-/// 从文件读取 PID，文件不存在返回 None
-pub fn read_pid_file(path: &Path) -> Result<Option<u32>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("无法读取 PID 文件: {}", path.display()))?;
-    let pid = content
-        .trim()
-        .parse::<u32>()
-        .with_context(|| format!("PID 文件内容无效: {}", path.display()))?;
-    Ok(Some(pid))
-}
-
-/// 删除 PID 文件
-pub fn delete_pid_file(path: &Path) -> Result<()> {
-    if path.exists() {
-        std::fs::remove_file(path)
-            .with_context(|| format!("无法删除 PID 文件: {}", path.display()))?;
-    }
-    Ok(())
-}
-
-/// 检查进程是否存活且为 tm-watcher 守护进程
-pub fn is_daemon_running(pid: u32) -> bool {
-    // 先检查进程是否存活
-    if unsafe { libc::kill(pid as i32, 0) } != 0 {
-        return false;
-    }
-    // 再检查是否为我们的进程
-    is_our_process(pid)
-}
-
-/// 检查进程是否为 tm-watcher（用于防止 PID 复用误杀）
-fn is_our_process(pid: u32) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        let output = Command::new("ps")
-            .args(["-p", &pid.to_string(), "-o", "comm="])
-            .output();
-
-        if let Ok(output) = output
-            && let Ok(comm) = String::from_utf8(output.stdout)
-        {
-            return comm.trim().contains("tm-watcher");
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = pid;
-    }
-    false
-}
+use crate::TmBackend;
 
 /// 定期清理任务
 pub async fn run_periodic_cleanup<F>(
@@ -112,49 +46,6 @@ pub async fn run_periodic_cleanup<F>(
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_pid_file_write_read_delete() {
-        let temp_dir = TempDir::new().unwrap();
-        let pid_path = temp_dir.path().join("test.pid");
-
-        write_pid_file(12345, &pid_path).unwrap();
-        assert_eq!(read_pid_file(&pid_path).unwrap(), Some(12345));
-
-        delete_pid_file(&pid_path).unwrap();
-        assert_eq!(read_pid_file(&pid_path).unwrap(), None);
-    }
-
-    #[test]
-    fn test_is_daemon_running_alive_pid() {
-        // 当前进程不是 tm-watcher，应返回 false
-        let current_pid = std::process::id();
-        assert!(!is_daemon_running(current_pid), "测试进程不应被识别为守护进程");
-    }
-
-    #[test]
-    fn test_is_daemon_running_stale_pid() {
-        // PID 99999 通常不存在（假设测试环境中）
-        assert!(!is_daemon_running(99999));
-    }
-
-    #[test]
-    fn test_is_our_process_rejects_wrong_process() {
-        // 当前进程的名字应该是 cargo 或测试运行器，不是 tm-watcher
-        let current_pid = std::process::id();
-        assert!(!is_our_process(current_pid), "当前测试进程不应被识别为 tm-watcher");
-    }
-
-    #[test]
-    fn test_is_our_process_returns_false_for_nonexistent_pid() {
-        assert!(!is_our_process(99999));
     }
 }
 
@@ -255,7 +146,12 @@ mod tm_check_tests {
         let backend = FakeTmBackend::new_unconfigured();
         let result = check_tm_configured(&backend);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Time Machine 未配置"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Time Machine 未配置")
+        );
     }
 }
 
@@ -297,112 +193,82 @@ mod precheck_tests {
 }
 // 追加到 daemon.rs 的 CLI 命令实现
 
-use std::process::{Command, Stdio};
-use std::fs::OpenOptions;
-use std::time::Duration as StdDuration;
+/// cmd_start: 启动守护进程(launchd 模式)
+pub fn cmd_start(db_path: &Path, log_path: &Path) -> Result<()> {
+    use crate::launchd;
 
-/// cmd_start: 启动守护进程（self-respawn模式）
-pub fn cmd_start(
-    _config_path: &Path,
-    db_path: &Path,
-    pid_path: &Path,
-    log_path: &Path,
-) -> Result<()> {
     // 预检：TM 配置和数据库可访问性
     precheck_daemon_start(db_path)?;
 
-    // 检查是否已在运行
-    if let Some(pid) = read_pid_file(pid_path)? {
-        if is_daemon_running(pid) {
-            anyhow::bail!("守护进程已在运行 (PID: {})", pid);
+    // 静默清理旧版本 PID 文件(Issue #4 遗留)
+    if let Some(home) = dirs::home_dir() {
+        let old_pid = home.join(".local/var/run/tm-watcher.pid");
+        if old_pid.exists() {
+            let _ = std::fs::remove_file(old_pid);
         }
-        // PID 文件存在但进程已死，删除旧文件
-        delete_pid_file(pid_path)?;
     }
 
+    // 检查是否已在运行
+    if let Some(pid) = launchd::query_status() {
+        anyhow::bail!("守护进程已在运行 (PID: {})", pid);
+    }
+
+    // 生成 plist
+    let exe_path = std::env::current_exe().context("无法获取当前可执行文件路径")?;
+    let plist_content = launchd::generate_plist(&exe_path, log_path);
+    let plist_path = launchd::plist_path()?;
+
     // 创建必要的目录
+    if let Some(parent) = plist_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("无法创建 plist 目录: {}", parent.display()))?;
+    }
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // 打开日志文件（追加模式）
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)
-        .with_context(|| format!("无法创建日志文件: {}", log_path.display()))?;
+    // 写入 plist
+    std::fs::write(&plist_path, plist_content)
+        .with_context(|| format!("无法写入 plist: {}", plist_path.display()))?;
 
-    // 启动 __daemon 子命令
-    let child = Command::new(std::env::current_exe()?)
-        .arg("__daemon")
-        .stdout(Stdio::from(log_file.try_clone()?))
-        .stderr(Stdio::from(log_file))
-        .stdin(Stdio::null())
-        .spawn()
-        .context("无法启动守护进程")?;
+    // 启动 launchd job
+    launchd::bootstrap(&plist_path)?;
 
-    // 写入 PID 文件
-    write_pid_file(child.id(), pid_path)?;
-
-    println!("✓ 守护进程已启动 (PID: {})", child.id());
+    println!("✓ 守护进程已启动");
     println!("  日志: {}", log_path.display());
-    println!("  PID 文件: {}", pid_path.display());
+    println!("  plist: {}", plist_path.display());
+    println!("  登录自启: 启用");
+    println!("  崩溃重启: 启用");
 
     Ok(())
 }
 
-/// cmd_stop: 停止守护进程
-pub fn cmd_stop(pid_path: &Path) -> Result<()> {
-    let pid = match read_pid_file(pid_path)? {
-        Some(pid) => pid,
-        None => {
-            println!("守护进程未运行");
-            return Ok(());
-        }
-    };
+/// cmd_stop: 停止守护进程(launchd 模式)
+pub fn cmd_stop() -> Result<()> {
+    use crate::launchd;
 
-    if !is_daemon_running(pid) {
-        println!("守护进程未运行（PID 文件已过期）");
-        delete_pid_file(pid_path)?;
+    // 检查是否在运行
+    if launchd::query_status().is_none() {
+        println!("守护进程未运行");
         return Ok(());
     }
 
-    // 发送 SIGTERM
-    unsafe {
-        if libc::kill(pid as i32, libc::SIGTERM) != 0 {
-            anyhow::bail!("无法发送停止信号到进程 {}", pid);
-        }
-    }
+    // 停止 launchd job
+    launchd::bootout().context("停止守护进程失败")?;
 
-    println!("正在停止守护进程 (PID: {})...", pid);
+    println!("✓ 守护进程已停止");
 
-    // 等待进程退出（轮询 PID 文件删除，超时 5 秒）
-    for _ in 0..50 {
-        if !pid_path.exists() {
-            println!("✓ 守护进程已停止");
-            return Ok(());
-        }
-        std::thread::sleep(StdDuration::from_millis(100));
-    }
-
-    anyhow::bail!("守护进程未在 5 秒内停止");
+    Ok(())
 }
 
 /// cmd_status: 显示守护进程状态
-pub fn cmd_status(
-    config: &crate::Config,
-    database: &Database,
-    pid_path: &Path,
-) -> Result<()> {
+pub fn cmd_status(config: &crate::Config, database: &Database) -> Result<()> {
+    use crate::launchd;
+
     // 检查运行状态
-    let running = if let Some(pid) = read_pid_file(pid_path)? {
-        if is_daemon_running(pid) {
-            println!("状态: 运行中 (PID: {})", pid);
-            true
-        } else {
-            println!("状态: 未运行（PID 文件已过期）");
-            false
-        }
+    let running = if let Some(pid) = launchd::query_status() {
+        println!("状态: 运行中 (PID: {})", pid);
+        true
     } else {
         println!("状态: 未运行");
         false

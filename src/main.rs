@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tm_watcher::{
-    Cleaner, Config, Database, RealTmBackend, Scanner, Watcher, check_tm_configured,
-    cmd_start, cmd_status, cmd_stop, format_exclusion_list,
+    Cleaner, Config, Database, RealTmBackend, Scanner, Watcher, check_tm_configured, cmd_start,
+    cmd_status, cmd_stop, format_exclusion_list,
 };
 
 fn main() {
@@ -155,26 +155,22 @@ fn expand_tilde(path: &str) -> String {
 }
 
 fn cmd_start_wrapper() -> Result<()> {
-    let config_path = default_config_path()?;
     let db_path = default_db_path()?;
-    let pid_path = default_pid_path()?;
     let log_path = default_log_path()?;
 
-    cmd_start(&config_path, &db_path, &pid_path, &log_path)
+    cmd_start(&db_path, &log_path)
 }
 
 fn cmd_stop_wrapper() -> Result<()> {
-    let pid_path = default_pid_path()?;
-    cmd_stop(&pid_path)
+    cmd_stop()
 }
 
 fn cmd_status_wrapper() -> Result<()> {
     let config_path = default_config_path()?;
     let config = Config::load_or_create(&config_path)?;
     let database = open_default_database()?;
-    let pid_path = default_pid_path()?;
 
-    cmd_status(&config, &database, &pid_path)
+    cmd_status(&config, &database)
 }
 
 fn cmd_daemon_wrapper() -> Result<()> {
@@ -183,10 +179,9 @@ fn cmd_daemon_wrapper() -> Result<()> {
 
     let config_path = default_config_path()?;
     let config = Config::load_or_create(&config_path)?;
-    
+
     let database = open_default_database()?;
     let tm_backend = Box::new(RealTmBackend::new());
-    let pid_path = default_pid_path()?;
 
     // 检查 Time Machine 是否配置
     check_tm_configured(tm_backend.as_ref())?;
@@ -197,7 +192,7 @@ fn cmd_daemon_wrapper() -> Result<()> {
 
     // 设置 shutdown 信号
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    
+
     tokio::runtime::Runtime::new()?.block_on(async move {
         // 处理 SIGTERM
         tokio::spawn(async move {
@@ -218,10 +213,16 @@ fn cmd_daemon_wrapper() -> Result<()> {
             .collect();
 
         let watch_handle = if !watch_paths.is_empty() {
-            let watcher_clone = Watcher::new(config.clone(), database.clone(), Box::new(RealTmBackend::new()))?;
+            let watcher_clone = Watcher::new(
+                config.clone(),
+                database.clone(),
+                Box::new(RealTmBackend::new()),
+            )?;
             let shutdown_rx_clone = shutdown_rx.clone();
             Some(tokio::spawn(async move {
-                watcher_clone.watch_multiple(&watch_paths, shutdown_rx_clone).await
+                watcher_clone
+                    .watch_multiple(&watch_paths, shutdown_rx_clone)
+                    .await
             }))
         } else {
             None
@@ -233,7 +234,13 @@ fn cmd_daemon_wrapper() -> Result<()> {
             let interval = config.interval_hours;
             let shutdown_rx_clone = shutdown_rx.clone();
             async move {
-                run_periodic_cleanup(db, || Box::new(RealTmBackend::new()), interval, shutdown_rx_clone).await;
+                run_periodic_cleanup(
+                    db,
+                    || Box::new(RealTmBackend::new()),
+                    interval,
+                    shutdown_rx_clone,
+                )
+                .await;
             }
         });
 
@@ -246,22 +253,13 @@ fn cmd_daemon_wrapper() -> Result<()> {
         }
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), cleanup_handle).await;
 
-        // 删除 PID 文件
-        let _ = std::fs::remove_file(&pid_path);
-
         Ok::<(), anyhow::Error>(())
     })?;
 
     Ok(())
 }
 
-/// 默认 PID 文件路径
-fn default_pid_path() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("无法获取用户主目录")?;
-    Ok(home.join(".local/var/run/tm-watcher.pid"))
-}
-
-/// 默认日志文件路径
+/// 默认配置文件路径: ~/.config/tm-watcher/config.toml
 fn default_log_path() -> Result<PathBuf> {
     let home = dirs::home_dir().context("无法获取用户主目录")?;
     Ok(home.join(".local/share/tm-watcher/daemon.log"))
