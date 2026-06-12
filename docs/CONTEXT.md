@@ -1,3 +1,5 @@
+<!-- ABOUTME: 定义 tm-watcher 的领域语言、核心概念和长期设计约定。 -->
+
 # Time Machine Watcher - 领域语言
 
 ## 核心概念
@@ -83,18 +85,18 @@ PRD 最初提议根据目录大小决定是否排除。
 ### 守护进程 (Daemon)
 后台运行的监控服务，响应文件系统事件并执行排除/清理操作。
 
-**生命周期管理（分阶段）：**
+**生命周期管理：macOS LaunchAgent**
+- `tm-watcher start`：预检 Time Machine、配置和数据库，生成 `~/Library/LaunchAgents/com.zzerding.tm-watcher.plist`，再调用 `launchctl bootstrap`
+- `tm-watcher stop`：调用 `launchctl bootout`，并删除 plist
+- `tm-watcher status`：调用 `launchctl print` 查询运行状态和 PID
+- `tm-watcher __daemon`：以前台进程运行 watcher 和定期清理，由 launchd 托管
+- LaunchAgent 配置 `RunAtLoad = true` 和 `KeepAlive.SuccessfulExit = false`，提供登录自启和异常重启
 
-**MVP (v0.1.0)：后台进程 + PID 文件**
-- `tm-watcher start`：fork 到后台，写 PID 到 `~/.local/var/run/tm-watcher.pid`
-- `tm-watcher stop`：读取 PID 并发送 SIGTERM
-- 用户需要每次开机后手动启动
-
-**v1.0.0：LaunchAgent 集成**
-- 安装 `~/Library/LaunchAgents/com.tm-watcher.plist`
-- macOS 自动管理：开机启动、崩溃重启
-- `tm-watcher start/stop` 调用 `launchctl load/unload`
-- Homebrew 安装时自动配置 LaunchAgent
+**已移除的旧方案：PID 文件守护进程**
+- 不再 fork 后自行管理后台进程
+- 不再依赖 `~/.local/var/run/tm-watcher.pid` 判断运行状态
+- 不再手写 PID 复用防御和 SIGTERM 轮询停止
+- `start` 会静默清理旧版本遗留 PID 文件
 
 ### 扫描 (Scan)
 手动触发的全量扫描命令：`tm-watcher scan <path>`
@@ -266,7 +268,7 @@ confirmation_delay_seconds = 5
 - **实时清理：** 检测到目录删除时立即清理排除记录
 - **定期清理：** 每 24 小时全量扫描，修正脏数据（兜底机制）
 - **CLI 命令：**
-  - `start` / `stop` - 启动/停止守护进程（PID 文件模式）
+  - `start` / `stop` - 通过 launchd 启动/停止守护进程
   - `scan <path>` - 手动扫描指定路径
   - `list` - 列出所有已排除目录
   - `status` - 显示监控状态（监控路径、已排除数量、最后清理时间）
@@ -283,5 +285,4 @@ confirmation_delay_seconds = 5
 - 日志轮转
 
 ### 推迟到 v1.0.0
-- LaunchAgent 自动启动集成
 - Homebrew 发布
