@@ -305,3 +305,91 @@ jobs:
             "${release_flags[@]}"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs:
+      - gate
+      - build
+      - publish
+    if: ${{ needs.gate.outputs.is_tag_release == 'true' && needs.gate.outputs.is_prerelease != 'true' }}
+    runs-on: macos-15-intel
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: zzerding/homebrew-tap
+          ref: main
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download published checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release download "${{ needs.gate.outputs.tag }}" \
+            --pattern SHA256SUMS \
+            --dir release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Render formula
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${{ needs.gate.outputs.version }}"
+          arm_archive="${PACKAGE_NAME}-${{ needs.gate.outputs.tag }}-aarch64-apple-darwin.tar.gz"
+          intel_archive="${PACKAGE_NAME}-${{ needs.gate.outputs.tag }}-x86_64-apple-darwin.tar.gz"
+          checksums_file="release-assets/SHA256SUMS"
+
+          if [[ ! -f "$checksums_file" ]]; then
+            echo "Expected published SHA256SUMS was not found." >&2
+            find release-assets -maxdepth 1 -type f -print >&2
+            exit 1
+          fi
+
+          arm_sha256="$(awk -v file="$arm_archive" '$2 == "*" file || $2 == file { print $1 }' "$checksums_file")"
+          intel_sha256="$(awk -v file="$intel_archive" '$2 == "*" file || $2 == file { print $1 }' "$checksums_file")"
+          if [[ -z "$arm_sha256" || -z "$intel_sha256" ]]; then
+            echo "Published SHA256SUMS does not contain both Homebrew tarballs." >&2
+            cat "$checksums_file" >&2
+            exit 1
+          fi
+
+          bash source/scripts/render-homebrew-formula.sh \
+            "$version" \
+            "$arm_sha256" \
+            "$intel_sha256" \
+            homebrew-tap/Formula/tm-watcher.rb
+
+      - name: Commit formula update
+        shell: bash
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -z "$(git status --short -- Formula/tm-watcher.rb)" ]]; then
+            echo "Formula/tm-watcher.rb is already up to date."
+            exit 0
+          fi
+
+          git add Formula/tm-watcher.rb
+          git commit -m "Update tm-watcher to ${{ needs.gate.outputs.version }}"
+          git push origin HEAD:main
