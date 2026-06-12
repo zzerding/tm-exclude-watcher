@@ -1,6 +1,6 @@
 [package]
 name = "tm-watcher"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition = "2024"
 description = "Automatically manage macOS Time Machine exclusions for development directories"
 repository = "https://github.com/zzerding/tm-exclude-watcher"
