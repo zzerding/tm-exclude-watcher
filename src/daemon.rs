@@ -18,7 +18,7 @@ pub async fn run_periodic_cleanup<F>(
     use crate::Cleaner;
 
     if interval_hours == 0 {
-        eprintln!("错误: 清理间隔不能为 0");
+        tracing::error!("清理间隔不能为 0");
         return;
     }
 
@@ -30,14 +30,19 @@ pub async fn run_periodic_cleanup<F>(
                 let cleaner = Cleaner::new(database.clone(), tm_backend_factory());
                 match cleaner.clean() {
                     Ok(result) => {
-                        println!("🔄 定期清理完成: {} 条记录清理, {} 条记录检查", result.cleaned_count, result.checked_count);
+                        tracing::info!(
+                            cleaned_count = result.cleaned_count,
+                            checked_count = result.checked_count,
+                            error_count = result.errors.len(),
+                            "定期清理完成"
+                        );
                         if !result.errors.is_empty() {
                             for err in &result.errors {
-                                eprintln!("⚠ 清理错误: {}", err);
+                                tracing::warn!(error = %err, "定期清理错误");
                             }
                         }
                     }
-                    Err(e) => eprintln!("⚠ 定期清理失败: {}", e),
+                    Err(e) => tracing::warn!(error = %e, "定期清理失败"),
                 }
             }
             _ = shutdown.changed() => {

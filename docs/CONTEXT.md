@@ -213,10 +213,10 @@ confirmation_delay_seconds = 5
 - **Error：** 致命错误（Time Machine 未配置、数据库损坏）
 
 **日志轮转（MVP）：**
-不实现轮转，简单追加写入。未来版本（v0.2+）可加入"保留最近 7 天"策略。
+使用 `tracing-appender` 的 rolling writer 写入固定文件 `daemon.log`；MVP 不实现日志保留、压缩或清理策略。未来版本（v0.2+）可加入"保留最近 7 天"策略。
 
 **查看命令：**
-`tm-watcher logs` 等价于 `tail -f ~/.local/share/tm-watcher/daemon.log`，实时查看守护进程日志。
+当前手动运行 `tail -f ~/.local/share/tm-watcher/daemon.log` 实时查看守护进程日志。
 
 ### 数据存储 (Data Storage)
 使用 SQLite 存储排除记录，文件位于 `~/.local/share/tm-watcher/exclusions.db`。
