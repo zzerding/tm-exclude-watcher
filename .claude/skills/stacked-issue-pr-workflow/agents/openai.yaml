@@ -1,4 +1,0 @@
-interface:
-  display_name: "Stacked Issue PR Workflow"
-  short_description: "Plan, build, review stacked issue PRs"
-  default_prompt: "Use $stacked-issue-pr-workflow to implement a GitHub issue as a stacked PR with subagent planning, review, verification, and issue updates."

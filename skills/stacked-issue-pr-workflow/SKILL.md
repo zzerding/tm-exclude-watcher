@@ -1,6 +1,6 @@
 ---
 name: stacked-issue-pr-workflow
-description: Use when Codex needs to implement a GitHub issue as a stacked pull request with an issue plan comment, subagent TDD planning, subagent plan review, delegated implementation, standards/spec review, verification, commits, PR creation/update, and issue progress comments. Trigger for requests like "pick/finish an issue", "make a stacked PR", "use subagents to plan/review/implement", or "update the issue after the PR".
+description: Use when implementing a GitHub issue as a stacked pull request with an issue plan comment, subagent TDD planning, optional plan review, delegated implementation, standards/spec review, verification, commits, PR creation/update, and issue progress comments. Trigger for requests like "pick/finish an issue", "make a stacked PR", "use subagents to plan/review/implement", or "update the issue after the PR".
 ---
 
 # Stacked Issue PR Workflow
@@ -12,10 +12,12 @@ Run a small-to-medium GitHub issue through a disciplined stacked-PR loop: inspec
 - Read project-local `AGENT.md` / `agent.md` first when present.
 - Treat current worktree, GitHub issue, and PR state as authoritative.
 - Never stage unrelated worktree changes.
-- Prefer stacked branches when earlier PRs are still open; base the new branch on the previous PR head.
+- Prefer stacked branches when earlier PRs are still open; base the new branch on the previous PR head. When no earlier PRs are open, base on main.
+- Every subagent prompt must include the pinned state: issue number, branch name, stack base ref, diff baseline, and unrelated dirty files to ignore. Subagents do their own deep reading; the parent passes coordinates and constraints, not file contents.
 - Use subagents only for the specific delegated roles the user asked for or where parallel review reduces risk.
 - Do not close the issue unless the issue scope is complete and the relevant PRs are merged.
 - Keep user-facing progress short, but include concrete branch/PR/verification facts.
+- Stacked PRs require non-squash merge. If the repository uses squash-merge by default, warn the user before creating the stack.
 
 ## Workflow
 
@@ -27,27 +29,32 @@ Run a small-to-medium GitHub issue through a disciplined stacked-PR loop: inspec
 
 2. **TDD plan subagent**
    - Spawn one read-only planning subagent.
+   - Pass pinned state: issue number, current branch, stack base, unrelated dirty files.
    - Ask it to read the issue, current code, tests, domain docs, and return:
      - observable requirements,
      - vertical TDD slices,
      - files likely to change,
      - risks and scope boundaries.
 
-3. **Plan review subagent**
-   - Spawn one read-only reviewer for the plan.
+3. **Plan review subagent (conditional)**
+   - Only when the plan involves schema/API changes, architectural choices, or touches >5 files.
+   - Otherwise skip — the issue plan comment (step 4) is the review gate.
+   - If triggered: spawn one read-only reviewer for the plan.
    - Ask whether the plan satisfies the issue/spec without over-design.
    - Fold concrete findings into the plan before coding.
 
 4. **Branch and issue plan**
    - Create the stacked branch from the correct base branch.
+   - Show the plan comment to the user before posting to the GitHub issue.
    - Comment the implementation plan on the GitHub issue before coding.
    - Include assumptions, vertical slices, expected files, and explicit non-goals.
 
 5. **Implementation subagent**
    - Delegate implementation to one worker when requested or useful.
+   - Pass pinned state and scope boundaries.
    - Give it a bounded write scope and tell it not to commit, push, or touch unrelated files.
    - Require tests-first where practical and at least one full verification run.
-   - Parent agent reviews and integrates the returned patch.
+   - Parent agent reviews the diff the worker produced (`git diff`) before proceeding.
 
 6. **Local verification**
    - Read the diff including untracked files.
@@ -57,12 +64,13 @@ Run a small-to-medium GitHub issue through a disciplined stacked-PR loop: inspec
      - `cargo clippy --all-targets -- -D warnings`
    - Fix failures; never bypass hooks or verification.
 
-7. **Review skill pass**
+7. **Dual review pass**
    - Review against the fixed point for this PR, usually the stacked base branch.
    - If work is uncommitted, review `git diff --cached` after staging the intended files.
    - Run two independent subagents:
      - Standards: documented repo/project/user rules.
      - Spec: issue body/comments or PRD.
+   - Pass pinned state (stack base ref, issue number) to both reviewers.
    - Fix real findings, add tests when behavior changed, rerun gates, and rerun targeted review if needed.
 
 8. **Commit and PR**
@@ -81,6 +89,26 @@ Run a small-to-medium GitHub issue through a disciplined stacked-PR loop: inspec
    - Comment on the issue with what was completed, verification, PR link, and whether the issue remains open.
    - Confirm branch tracking, remote SHA, PR base/head, PR state, merge state, and issue state.
    - Leave the issue open if any stacked PR is still unmerged or scope remains.
+
+## Stack Maintenance
+
+When a prior PR in the stack is merged or updated:
+
+1. **After base PR merge**
+   - The merged PR's branch is typically deleted by GitHub.
+   - Rebase current branch onto main: `git rebase --onto main <old-base-branch-name>`
+   - Retarget the PR base to main via `gh pr edit <pr-number> --base main`
+   - Verify the PR diff still shows only the current PR's changes.
+
+2. **After base PR code changes**
+   - If the base PR was amended during review, rebase current branch onto the updated base.
+   - Run full verification gates again to catch integration issues.
+   - Push with `--force-with-lease` if the rebase rewrote history.
+
+3. **Conflict resolution**
+   - Conflicts during rebase indicate overlapping changes between stack layers.
+   - Resolve carefully and verify tests still pass after resolution.
+   - Never skip verification after conflict resolution.
 
 ## Review Prompts
 
