@@ -15,6 +15,12 @@ fn homebrew_tap_job(workflow: &str) -> &str {
     &workflow[start..]
 }
 
+fn publish_job(workflow: &str) -> &str {
+    let start = workflow.find("  publish:\n").unwrap();
+    let end = workflow.find("  update-homebrew-tap:\n").unwrap();
+    &workflow[start..end]
+}
+
 #[test]
 fn test_homebrew_tap_update_is_stable_tag_only() {
     let workflow = release_workflow();
@@ -52,6 +58,20 @@ fn test_release_workflow_does_not_hardcode_github_token_values() {
             "found hardcoded token prefix: {prefix}"
         );
     }
+}
+
+#[test]
+fn test_publish_job_checks_out_source_before_release_create() {
+    let workflow = release_workflow();
+    let job = publish_job(&workflow);
+    let checkout = job.find("- name: Checkout").unwrap();
+    let download_archives = job.find("- name: Download release archives").unwrap();
+    let create_release = job.find("- name: Create GitHub Release").unwrap();
+
+    assert!(checkout < download_archives);
+    assert!(download_archives < create_release);
+    assert!(job.contains("uses: actions/checkout@v4"));
+    assert!(job.contains("--verify-tag"));
 }
 
 #[test]
