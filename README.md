@@ -168,7 +168,7 @@ tm-watcher stop
 - [x] Homebrew formula 生成和 tap 更新 workflow（v0.2）
 - [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.2）
 
-当前版本：**v0.2.0-rc.1**
+当前版本：**v0.2.0-rc.2**
 
 ## License
 
