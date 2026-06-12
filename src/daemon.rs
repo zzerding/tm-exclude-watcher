@@ -155,11 +155,20 @@ mod tm_check_tests {
     }
 }
 
-/// 启动前预检：验证 TM 配置和数据库可访问
-pub fn precheck_daemon_start(db_path: &Path) -> Result<()> {
+/// 启动前预检：验证 TM 配置、加载并验证配置文件、确保数据库可访问
+pub fn precheck_daemon_start(config_path: &Path, db_path: &Path) -> Result<()> {
     // 检查 TM 配置
     let backend = crate::RealTmBackend::new();
     check_tm_configured(&backend)?;
+
+    // 加载并验证配置文件（包含 interval_hours != 0 校验）
+    crate::Config::load_or_create(config_path)?;
+
+    // 确保数据库父目录存在
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("无法创建数据目录: {}", parent.display()))?;
+    }
 
     // 检查数据库可访问
     Database::new(db_path)?;
@@ -175,30 +184,33 @@ mod precheck_tests {
     #[test]
     fn test_precheck_fails_if_tm_not_configured() {
         let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
         let db_path = temp_dir.path().join("test.db");
 
         // RealTmBackend 需要真实 tmutil，这个测试会失败
         // 在集成环境中用 FakeTmBackend mock
         // 这里我们只测试函数签名存在
-        let result = precheck_daemon_start(&db_path);
+        let result = precheck_daemon_start(&config_path, &db_path);
         // 无法在测试中验证真实 TM，跳过断言
         let _ = result;
     }
 
     #[test]
     fn test_precheck_fails_if_database_inaccessible() {
-        let result = precheck_daemon_start(Path::new("/nonexistent/path/test.db"));
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        let result = precheck_daemon_start(&config_path, Path::new("/nonexistent/path/test.db"));
         assert!(result.is_err());
     }
 }
 // 追加到 daemon.rs 的 CLI 命令实现
 
 /// cmd_start: 启动守护进程(launchd 模式)
-pub fn cmd_start(db_path: &Path, log_path: &Path) -> Result<()> {
+pub fn cmd_start(config_path: &Path, db_path: &Path, log_path: &Path) -> Result<()> {
     use crate::launchd;
 
-    // 预检：TM 配置和数据库可访问性
-    precheck_daemon_start(db_path)?;
+    // 预检：TM 配置、配置文件验证和数据库可访问性
+    precheck_daemon_start(config_path, db_path)?;
 
     // 静默清理旧版本 PID 文件(Issue #4 遗留)
     if let Some(home) = dirs::home_dir() {
@@ -247,16 +259,19 @@ pub fn cmd_start(db_path: &Path, log_path: &Path) -> Result<()> {
 pub fn cmd_stop() -> Result<()> {
     use crate::launchd;
 
-    // 检查是否在运行
-    if launchd::query_status().is_none() {
-        println!("守护进程未运行");
-        return Ok(());
+    let was_loaded = launchd::bootout_if_loaded().context("停止守护进程失败")?;
+
+    let plist_path = launchd::plist_path()?;
+    if plist_path.exists() {
+        std::fs::remove_file(&plist_path)
+            .with_context(|| format!("无法删除 plist: {}", plist_path.display()))?;
     }
 
-    // 停止 launchd job
-    launchd::bootout().context("停止守护进程失败")?;
-
-    println!("✓ 守护进程已停止");
+    if was_loaded {
+        println!("✓ 守护进程已停止");
+    } else {
+        println!("守护进程未运行");
+    }
 
     Ok(())
 }

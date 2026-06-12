@@ -1,42 +1,43 @@
-# Issues to Create
+<!-- ABOUTME: 保存项目早期拆分 GitHub issues 的草稿与验收标准。 -->
 
-## Issue #4: 守护进程模式（Daemon mode）
+# Issue 状态
+
+## Issue #4: 守护进程模式（launchd lifecycle）- 已重构
 
 **Labels**: enhancement
 
-**Body**:
-```
-## Parent
+**状态**：代码已实现。原始 fork/PID 文件方案已重构为 macOS launchd 托管。
 
-无（顶层切片）
+### 当前实现
 
-## What to build
+- `src/launchd.rs`：生成 `~/Library/LaunchAgents/com.zzerding.tm-watcher.plist`，执行 `launchctl bootstrap` / `launchctl bootout`，并解析 `launchctl print`。
+- `src/daemon.rs`：保留 Time Machine、配置、数据库预检；清理旧 PID 文件残留；实现 LaunchAgent 的启动、停止和状态查询。
+- `src/main.rs`：接入 `start`、`stop`、`status` 和 `__daemon`。
+- `__daemon`：运行多路径监控和定期清理，并在收到 SIGTERM 后退出。
+- README 已记录登录自启、崩溃重启、plist 路径行为和 daemon log 路径。
 
-实现守护进程模式，将监控和定期清理功能整合到后台服务中。用户可以启动/停止守护进程，守护进程同时运行实时监控任务和定期清理调度器。
+### 相比原 issue 的范围变化
 
-这个切片包含：
-- 守护进程管理器：fork 到后台、PID 文件管理、信号处理（SIGTERM）
-- 后台监控任务：整合 #3 的 FsWatcher，监控配置中的所有 watch_paths
-- 定期清理调度器：整合 #2 的 Cleaner，按 cleanup.interval_hours 配置定期执行
-- CLI 命令：`tm-watcher start`、`tm-watcher stop`、`tm-watcher status`
+- 已移除：手写 fork 后台化、PID 文件管理、PID 复用检查、手动 SIGTERM 进程管理。
+- 已新增：LaunchAgent plist、`RunAtLoad`、`KeepAlive.SuccessfulExit = false`、stdout/stderr 重定向到 `~/.local/share/tm-watcher/daemon.log`。
+- 已保留：Time Machine 预检、数据库访问预检、watcher 集成、定期清理、`start` / `stop` / `status` CLI。
 
-## Acceptance criteria
+### 验收状态
 
-- [ ] `tm-watcher start` 启动守护进程并 fork 到后台
-- [ ] PID 文件写入 ~/.local/var/run/tm-watcher.pid
-- [ ] 如果守护进程已在运行，重复启动时返回错误提示「已在运行」
-- [ ] 守护进程同时运行两个任务：实时监控所有 watch_paths + 定期清理（按 interval_hours 配置）
-- [ ] 日志输出到 ~/.local/share/tm-watcher/daemon.log
-- [ ] `tm-watcher status` 显示：运行状态（是否运行中）、监控路径列表、已排除目录数量、最后清理时间（从日志或数据库推断）
-- [ ] `tm-watcher stop` 发送 SIGTERM 信号，守护进程优雅退出（清理资源、删除 PID 文件）
-- [ ] 守护进程接收 SIGTERM 后记录日志并退出
-- [ ] 检查 Time Machine 是否配置（`tmutil destinationinfo`），未配置则拒绝启动并输出错误
+- [x] `tm-watcher start` 预检 Time Machine、配置和数据库访问。
+- [x] `tm-watcher start` 写入 LaunchAgent plist，并通过 `launchctl bootstrap` 启动。
+- [x] 通过 `launchctl print` 的 PID 状态检测已运行的 daemon。
+- [x] LaunchAgent 运行 `tm-watcher __daemon`。
+- [x] `__daemon` 运行配置的监控路径和定期清理。
+- [x] LaunchAgent 将 stdout/stderr 重定向到 `~/.local/share/tm-watcher/daemon.log`。
+- [x] `tm-watcher status` 输出运行 PID、监控路径、排除数量和上次清理时间。
+- [x] `tm-watcher stop` 通过 `launchctl bootout` 卸载 LaunchAgent，并删除 plist。
+- [x] `start` 时静默清理旧的 `~/.local/var/run/tm-watcher.pid` 残留。
+- [x] `__daemon` 内部仍处理 SIGTERM 优雅退出。
 
-## Blocked by
+### 发布前跟进
 
-- #2 — 需要 Cleaner 模块
-- #3 — 需要 FsWatcher 模块
-```
+- 真实机器上的 `start` / `stop` / `status` E2E 验证归入 Issue #6。
 
 ---
 
@@ -136,9 +137,6 @@
 
 ## Blocked by
 
-- #1 — 手动扫描与排除
-- #2 — 查看和手动清理
-- #3 — 实时目录监控
-- #4 — 守护进程模式
 - #5 — 日志和可观测性
+- launchd `start` / `stop` / `status` 真实机器 E2E 验证
 ```

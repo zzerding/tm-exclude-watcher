@@ -1,3 +1,5 @@
+<!-- ABOUTME: 记录 tm-watcher 的产品目标、功能范围、路线图和测试策略。 -->
+
 # Time Machine 排除监控工具 - 产品文档
 
 ## 📋 项目概述
@@ -124,12 +126,12 @@ tm-watcher clean
 # 清理所有过期的排除规则
 ```
 
-#### v0.2.0 - 计划中
+#### v0.2.0 - 代码已实现，发布验证待完成
 
 **启动守护进程**
 ```bash
 tm-watcher start
-# 在后台启动监控服务
+# 通过 macOS LaunchAgent 启动后台监控服务
 ```
 
 **停止守护进程**
@@ -229,12 +231,13 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [x] 失效记录清理与状态漂移修复
 
 ### v0.2.0 - 实时监控与守护进程
-- [ ] 文件系统监控（FSEvents API）
-- [ ] 目录创建延迟确认（5秒）
-- [ ] 目录删除实时清理
-- [ ] 守护进程模式（`start` / `stop` / `status`）
-- [ ] PID 文件与 SIGTERM 处理
-- [ ] 定期清理任务（每 24 小时）
+- [x] 文件系统监控（FSEvents API）
+- [x] 目录创建延迟确认（5秒）
+- [x] 目录删除实时清理
+- [x] 守护进程模式（`start` / `stop` / `status`）
+- [x] LaunchAgent 托管生命周期与 SIGTERM 优雅退出
+- [x] 定期清理任务（每 24 小时）
+- [ ] 真实机器 E2E 验证与发布打磨
 
 ### v0.3.0 - 日志与可观测性
 - [ ] 集成 `tracing` 日志系统
@@ -250,7 +253,6 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [ ] 配置管理命令（`config --add-path` / `--add-rule`）
 
 ### v1.0.0 - 生产就绪
-- [ ] LaunchAgent 自动启动集成
 - [ ] GUI 状态栏应用（可选）
 - [ ] Homebrew 发布
 - [ ] 完整文档和测试覆盖

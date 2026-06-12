@@ -155,10 +155,11 @@ fn expand_tilde(path: &str) -> String {
 }
 
 fn cmd_start_wrapper() -> Result<()> {
+    let config_path = default_config_path()?;
     let db_path = default_db_path()?;
     let log_path = default_log_path()?;
 
-    cmd_start(&db_path, &log_path)
+    cmd_start(&config_path, &db_path, &log_path)
 }
 
 fn cmd_stop_wrapper() -> Result<()> {
