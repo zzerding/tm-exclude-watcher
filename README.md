@@ -16,7 +16,39 @@
 
 ## 安装
 
-需要 Rust 工具链，如果没有请先安装：
+### Homebrew
+
+stable 发布后，普通用户可通过 Homebrew 安装：
+
+```bash
+brew tap zzerding/tap
+brew install tm-watcher
+```
+
+Homebrew 安装后不会自动启动 daemon。需要后台监控时，显式运行 `tm-watcher start`；检查状态用 `tm-watcher status`；停止后台监控用 `tm-watcher stop`。
+
+### GitHub Release 二进制
+
+从 GitHub Release 下载对应版本和架构的 tarball：
+
+```text
+tm-watcher-v<version>-aarch64-apple-darwin.tar.gz
+tm-watcher-v<version>-x86_64-apple-darwin.tar.gz
+```
+
+解包后把 `tm-watcher` 放到 PATH 中：
+
+```bash
+VERSION=<version>
+ARCH=aarch64-apple-darwin
+shasum -a 256 -c SHA256SUMS
+tar -xzf "tm-watcher-v${VERSION}-${ARCH}.tar.gz"
+install -m 0755 tm-watcher*/tm-watcher /usr/local/bin/tm-watcher
+```
+
+### 源码安装
+
+需要 Rust 工具链。如果没有请先安装：
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -86,7 +118,7 @@ tm-watcher clean
 
 ### 守护进程模式
 
-启动守护进程,自动监控配置的路径并定期清理失效记录:
+启动守护进程，自动监控配置的路径并定期清理失效记录：
 
 ```bash
 # 启动
@@ -100,14 +132,15 @@ tm-watcher stop
 ```
 
 **特性:**
-- **登录自启:** 守护进程在用户登录时自动启动(macOS LaunchAgent)
-- **崩溃重启:** 异常退出时自动重启,正常退出(stop 命令)不会拉起
+- **登录自启:** 守护进程在用户登录时自动启动（macOS LaunchAgent）
+- **崩溃重启:** 异常退出时自动重启，正常退出（stop 命令）不会拉起
 - **日志路径:** `~/.local/share/tm-watcher/daemon.log`
+- **升级提示:** `tm-watcher status` 会检查 daemon 状态；如果 LaunchAgent 仍指向旧二进制路径，会提示运行 `tm-watcher stop && tm-watcher start`
 
 **开发者注意:**
-- plist 指向 `current_exe()` 绝对路径,开发模式下是 `target/debug/tm-watcher`
+- plist 指向 `current_exe()` 绝对路径，开发模式下是 `target/debug/tm-watcher`
 - `cargo clean` 后需重新执行 `tm-watcher start`
-- 旧版本升级用户需先用旧二进制执行 `stop` 停止旧守护进程
+- 手动替换二进制后可用 `tm-watcher status` 检查是否需要重启 daemon
 
 ## 配置
 
@@ -124,15 +157,16 @@ tm-watcher stop
 3. **记录**：写入本地 SQLite 数据库（`~/.local/share/tm-watcher/exclusions.db`）
 4. **清理**：`clean` 命令检查已记录目录是否仍存在，自动清理失效记录并修正状态漂移
 
-## Roadmap
+## 发布状态
 
 - [x] 手动扫描与排除（v0.1）
 - [x] 清理失效记录（v0.1）
 - [x] 实时文件系统监控（v0.2）
 - [x] 后台守护进程（v0.2）
 - [x] 日志和可观测性（v0.2）
-- [ ] 端到端测试与发布准备（v0.2）
-- [ ] Homebrew 发布（v1.0）
+- [x] GitHub Release macOS 双架构资产（v0.2）
+- [x] Homebrew formula 生成和 tap 更新 workflow（v0.2）
+- [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.2）
 
 当前版本：**v0.2.0-rc.1**
 

@@ -6,6 +6,10 @@ fn release_workflow() -> String {
     fs::read_to_string(".github/workflows/release.yml").unwrap()
 }
 
+fn release_doc() -> String {
+    fs::read_to_string("docs/release.md").unwrap()
+}
+
 fn homebrew_tap_job(workflow: &str) -> &str {
     let start = workflow.find("  update-homebrew-tap:\n").unwrap();
     &workflow[start..]
@@ -48,4 +52,33 @@ fn test_release_workflow_does_not_hardcode_github_token_values() {
             "found hardcoded token prefix: {prefix}"
         );
     }
+}
+
+#[test]
+fn test_release_docs_match_workflow_runner_and_asset_contract() {
+    let workflow = release_workflow();
+    let release_doc = release_doc();
+
+    for expected in [
+        "macos-15",
+        "macos-15-intel",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "tm-watcher-v0.2.0-aarch64-apple-darwin.tar.gz",
+        "tm-watcher-v0.2.0-x86_64-apple-darwin.tar.gz",
+        "SHA256SUMS",
+    ] {
+        assert!(release_doc.contains(expected));
+    }
+
+    assert!(workflow.contains("macos-15"));
+    assert!(workflow.contains("macos-15-intel"));
+    assert!(workflow.contains("aarch64-apple-darwin.tar.gz"));
+    assert!(workflow.contains("x86_64-apple-darwin.tar.gz"));
+    assert!(workflow.contains("SHA256SUMS"));
+    assert!(!workflow.contains("macos-14"));
+
+    assert!(release_doc.contains("RC 只发布 GitHub prerelease，不更新 Homebrew formula"));
+    assert!(release_doc.contains("stable 发布 GitHub Release，并自动更新 Homebrew formula"));
+    assert!(release_doc.contains("formula 不定义 `service do`"));
 }

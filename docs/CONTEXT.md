@@ -163,7 +163,7 @@ confirmation_delay_seconds = 5
 
 **配置说明：**
 - 默认监控常见开发目录（路径不存在也不报错，静默跳过）
-- 用户可通过 `tm-watcher config --add-path <path>` 或手动编辑调整
+- 用户当前通过手动编辑 `~/.config/tm-watcher/config.toml` 调整
 - 真正零配置：安装后直接 `tm-watcher start` 即可工作
 
 **配置内容：**
@@ -213,7 +213,7 @@ confirmation_delay_seconds = 5
 - **Error：** 致命错误（Time Machine 未配置、数据库损坏）
 
 **日志轮转（MVP）：**
-使用 `tracing-appender` 的 rolling writer 写入固定文件 `daemon.log`；MVP 不实现日志保留、压缩或清理策略。未来版本（v0.2+）可加入"保留最近 7 天"策略。
+使用 `tracing-appender` 的 rolling writer 写入固定文件 `daemon.log`；当前不实现日志保留、压缩或清理策略。后续版本可加入"保留最近 7 天"策略。
 
 **查看命令：**
 当前手动运行 `tail -f ~/.local/share/tm-watcher/daemon.log` 实时查看守护进程日志。
@@ -260,7 +260,7 @@ confirmation_delay_seconds = 5
 - 实现简单，符合 MVP 目标
 - 性能足够（文件系统操作比数据库慢得多，不存在瓶颈）
 
-## MVP (v0.1.0) 范围
+## v0.2.0 发布范围
 
 ### 包含的功能
 - **核心监控：** FSEvents 文件系统监控，递归扫描监控路径
@@ -277,12 +277,11 @@ confirmation_delay_seconds = 5
 - **日志系统：** 写入 `~/.local/share/tm-watcher/daemon.log`
 - **错误处理：** tmutil 失败分级处理，启动时检测 Time Machine 状态
 - **零配置：** 首次运行自动生成默认配置
+- **GitHub Release：** stable/RC tag 生成 macOS 双架构 tarball 和 `SHA256SUMS`
+- **Homebrew 安装：** stable 发布自动更新 `zzerding/homebrew-tap` formula，安装后不自动启动 daemon
 
-### 推迟到 v0.2.0
+### 推迟到后续版本
 - `logs` 命令（用户可手动 `tail -f ~/.local/share/tm-watcher/daemon.log`）
 - `config` 命令（用户可手动编辑 `~/.config/tm-watcher/config.toml`）
 - macOS 通知中心集成
 - 日志轮转
-
-### 推迟到 v1.0.0
-- Homebrew 发布
