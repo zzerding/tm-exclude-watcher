@@ -76,9 +76,8 @@ SHA256SUMS
 - stable 发布时额外执行 Homebrew tap 更新步骤。
 - Cargo 构建缓存使用成熟 action，例如 `Swatinem/rust-cache`，不要手写复杂 cache key。
 
-当前 GitHub Release 资产切片先接入 macOS tarball 发布链路，不更新 Homebrew tap。
 workflow 使用 `cargo-dist` 生成 tarball 和 checksum，再按本项目资产策略将文件名规范化为带版本号的 tarball 和聚合 `SHA256SUMS`。
-Homebrew tap 更新由后续 stable 发布切片接入。
+stable tag 发布完成 GitHub Release 后，同一个 workflow 使用 `HOMEBREW_TAP_TOKEN` 更新 Homebrew tap。
 
 发布门禁：
 
@@ -113,6 +112,15 @@ stable 发布自动更新 `zzerding/homebrew-tap`。更新失败时，stable rel
 - 权限范围：只允许 `zzerding/homebrew-tap` 的 Contents read/write
 
 不要使用全权限 classic PAT。
+
+凭据配置由仓库 owner 人工完成：
+
+1. 在 GitHub 创建 fine-grained personal access token。
+2. Resource owner 选择 `zzerding`，Repository access 只选择 `zzerding/homebrew-tap`。
+3. Repository permissions 只授予 Contents read/write。
+4. 在主仓库 `zzerding/tm-exclude-watcher` 的 Actions secrets 中保存为 `HOMEBREW_TAP_TOKEN`。
+
+workflow 只检查 `HOMEBREW_TAP_TOKEN` 是否存在并把它传给 checkout/push Homebrew tap 的步骤。不要在 issue、release notes、日志或仓库文件中记录 token 值。
 
 formula 下载 GitHub Release 预编译二进制，不从源码编译，不依赖 Rust toolchain：
 
