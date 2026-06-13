@@ -12,6 +12,11 @@ on:
         description: "Tag to validate, defaults to v<Cargo package version>"
         required: false
         type: string
+      update_homebrew_tap:
+        description: "Update Homebrew tap for an existing stable release"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -204,7 +209,7 @@ jobs:
     needs:
       - gate
       - build
-    if: ${{ needs.gate.outputs.is_tag_release == 'true' }}
+    if: ${{ needs.gate.outputs.is_tag_release == 'true' || inputs.update_homebrew_tap == true }}
     runs-on: macos-15-intel
     permissions:
       contents: write
@@ -273,8 +278,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Require existing release for Homebrew tap repair
+        if: ${{ needs.gate.outputs.is_tag_release != 'true' && steps.existing_release.outputs.release_exists != 'true' }}
+        shell: bash
+        run: |
+          echo "workflow_dispatch Homebrew tap repair requires an existing release with the expected assets." >&2
+          exit 1
+
       - name: Create GitHub Release
-        if: ${{ steps.existing_release.outputs.release_exists != 'true' }}
+        if: ${{ needs.gate.outputs.is_tag_release == 'true' && steps.existing_release.outputs.release_exists != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -315,7 +327,7 @@ jobs:
       - gate
       - build
       - publish
-    if: ${{ needs.gate.outputs.is_tag_release == 'true' && needs.gate.outputs.is_prerelease != 'true' }}
+    if: ${{ needs.gate.outputs.is_prerelease != 'true' && (needs.gate.outputs.is_tag_release == 'true' || inputs.update_homebrew_tap == true) }}
     runs-on: macos-15-intel
     steps:
       - name: Checkout source
@@ -357,6 +369,7 @@ jobs:
           set -euo pipefail
 
           gh release download "${{ needs.gate.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
             --pattern SHA256SUMS \
             --dir release-assets
         env:

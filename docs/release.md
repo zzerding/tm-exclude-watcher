@@ -172,6 +172,8 @@ Update tm-watcher to 0.2.0
 
 如果 stable tag 已创建但 tap 更新失败，不删除 tag、不重发同名 release。修复 workflow 或 tap 权限后，重新运行同一个 release workflow。workflow 应保持幂等：资产和 formula 可重复生成，formula 内容无变化时跳过提交并成功退出。
 
+如果失败原因需要先合并 workflow 修复，可通过 `workflow_dispatch` 指定同一个 stable tag，并显式设置 `update_homebrew_tap`，只对已存在且资产匹配的 GitHub Release 重新执行 Homebrew tap 更新。
+
 ## 发布前产品范围
 
 v0.2.0 发布准备必须包含：
