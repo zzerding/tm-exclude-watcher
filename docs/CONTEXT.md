@@ -114,6 +114,12 @@ PRD 最初提议根据目录大小决定是否排除。
 
 **幂等性：** 多次扫描同一路径是安全的，不会产生重复记录或重复操作。
 
+**预览模式：** `tm-watcher scan --dry-run <path>` 只预览将被排除的目录。
+- 不调用 `tmutil`
+- 不写数据库
+- 通过已有数据库记录区分"将要排除"和"已跳过"
+- 数据库不存在时按无已记录路径处理，不创建数据目录或数据库文件
+
 ### 符号链接 (Symlink)
 符号链接的处理策略：**不跟随（treat as regular files）**
 
@@ -290,3 +296,4 @@ confirmation_delay_seconds = 5
 
 ### 已进入实现
 - `doctor` 命令：执行 Time Machine、配置文件、数据库、daemon 和 LaunchAgent plist 健康检查；任何失败或警告返回非 0。
+- `scan --dry-run`：预览匹配目录并显示匹配规则；不调用 `tmutil`，不写数据库。

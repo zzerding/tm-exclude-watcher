@@ -670,6 +670,75 @@ fn test_scan_result_reports_skipped_count() {
 }
 
 #[test]
+fn test_scan_dry_run_reports_matches_without_tmutil_or_database_writes() {
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path();
+
+    let node_modules = base_path.join("project1/node_modules");
+    fs::create_dir_all(&node_modules).unwrap();
+
+    let target_dir = base_path.join("project2/target");
+    fs::create_dir_all(&target_dir).unwrap();
+
+    let config = Config {
+        exclude_rules: vec!["node_modules".to_string(), "target".to_string()],
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&node_modules, "node_modules", None)
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let result = Scanner::dry_run(config, Some(&database), base_path).unwrap();
+
+    assert_eq!(result.to_exclude.len(), 1);
+    assert_eq!(result.to_exclude[0].path, target_dir);
+    assert_eq!(result.to_exclude[0].rule, "target");
+    assert_eq!(result.skipped.len(), 1);
+    assert_eq!(result.skipped[0].path, node_modules);
+    assert_eq!(result.skipped[0].rule, "node_modules");
+    assert!(result.errors.is_empty());
+    assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
+    assert_eq!(database.get_exclusions().unwrap().len(), 1);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_scan_dry_run_reports_matching_symlink_itself() {
+    let temp_dir = TempDir::new().unwrap();
+    let base_path = temp_dir.path().join("workspace");
+    fs::create_dir_all(&base_path).unwrap();
+
+    let real_deps = temp_dir.path().join("shared-deps");
+    fs::create_dir_all(real_deps.join("nested/target")).unwrap();
+
+    let node_modules_link = base_path.join("project/node_modules");
+    fs::create_dir_all(node_modules_link.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real_deps, &node_modules_link).unwrap();
+
+    let config = Config {
+        exclude_rules: vec!["node_modules".to_string(), "target".to_string()],
+        ..Default::default()
+    };
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+
+    let result = Scanner::dry_run(config, Some(&database), &base_path).unwrap();
+
+    assert_eq!(result.to_exclude.len(), 1);
+    assert_eq!(result.to_exclude[0].path, node_modules_link);
+    assert_eq!(result.to_exclude[0].rule, "node_modules");
+    assert!(result.skipped.is_empty());
+}
+
+#[test]
 fn test_pruning_skips_subtree_of_matched_dir() {
     // 创建嵌套结构: project/node_modules/foo/node_modules
     let temp_dir = TempDir::new().unwrap();

@@ -43,6 +43,29 @@ fn write_launch_agent_plist(home: &TempDir, exe_path: &Path) {
     .unwrap();
 }
 
+fn write_exclusion_record(home: &TempDir, path: &Path, rule: &str) {
+    let data_dir = home.path().join(".local/share/tm-watcher");
+    fs::create_dir_all(&data_dir).unwrap();
+    let conn = rusqlite::Connection::open(data_dir.join("exclusions.db")).unwrap();
+    conn.execute(
+        "CREATE TABLE excluded_directories (
+            id INTEGER PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            rule TEXT NOT NULL,
+            size_bytes INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_checked_at DATETIME
+        )",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO excluded_directories (path, rule) VALUES (?, ?)",
+        rusqlite::params![path.to_str().unwrap(), rule],
+    )
+    .unwrap();
+}
+
 #[test]
 fn test_version_outputs_package_version_without_user_state() {
     for arg in ["--version", "-V"] {
@@ -148,4 +171,60 @@ fn test_doctor_reports_all_checks_and_exits_nonzero_on_warnings() {
             "missing doctor check: {expected}"
         );
     }
+}
+
+#[test]
+fn test_scan_dry_run_reports_preview_without_user_state() {
+    let home = TempDir::new().unwrap();
+    let scan_root = home.path().join("Code");
+    fs::create_dir_all(scan_root.join("project/node_modules")).unwrap();
+
+    let output = run_tm_watcher(&["scan", "--dry-run", scan_root.to_str().unwrap()], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("扫描预览:"));
+    assert!(stdout.contains("将要排除的目录（1 个）:"));
+    assert!(stdout.contains("~/Code/project/node_modules"));
+    assert!(stdout.contains("匹配规则: node_modules"));
+    assert!(stdout.contains("已跳过（之前已排除）: 0 个"));
+    assert!(stdout.contains("提示: 使用 'tm-watcher scan"));
+    assert!(stdout.contains("' 执行实际排除"));
+    assert!(output.stderr.is_empty());
+    assert_no_user_state_created(&home);
+}
+
+#[test]
+fn test_scan_dry_run_missing_path_reports_clear_error() {
+    let home = TempDir::new().unwrap();
+    let missing_path = home.path().join("missing");
+    let output = run_tm_watcher(
+        &["scan", "--dry-run", missing_path.to_str().unwrap()],
+        &home,
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("路径不存在"));
+}
+
+#[test]
+fn test_scan_dry_run_reports_recorded_paths_as_skipped() {
+    let home = TempDir::new().unwrap();
+    let scan_root = home.path().join("Code");
+    let node_modules = scan_root.join("project-a/node_modules");
+    let target_dir = scan_root.join("project-b/target");
+    fs::create_dir_all(&node_modules).unwrap();
+    fs::create_dir_all(&target_dir).unwrap();
+    write_exclusion_record(&home, &node_modules, "node_modules");
+
+    let output = run_tm_watcher(&["scan", "--dry-run", scan_root.to_str().unwrap()], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("将要排除的目录（1 个）:"));
+    assert!(stdout.contains("~/Code/project-b/target"));
+    assert!(stdout.contains("匹配规则: target"));
+    assert!(stdout.contains("已跳过（之前已排除）: 1 个"));
+    assert!(stdout.contains("~/Code/project-a/node_modules"));
 }

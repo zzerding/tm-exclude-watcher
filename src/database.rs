@@ -1,7 +1,7 @@
 // ABOUTME: 数据库层 - SQLite 存储排除记录
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -44,6 +44,20 @@ impl Database {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// 只读打开已有数据库；文件不存在时返回 None，且不创建任何目录或 schema。
+    pub fn open_read_only_if_exists(db_path: &Path) -> Result<Option<Self>> {
+        if !db_path.exists() {
+            return Ok(None);
+        }
+
+        let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        validate_schema(&conn, db_path)?;
+
+        Ok(Some(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        }))
     }
 
     /// 记录排除目录（幂等：路径已存在则忽略）
