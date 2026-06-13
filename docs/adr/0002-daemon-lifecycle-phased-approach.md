@@ -39,6 +39,8 @@ Issue #4 实现过程中，守护进程生命周期已经重构为 `launchd` 托
 - `tm-watcher daemon status`：
   - 通过 `launchctl print gui/$UID/com.zzerding.tm-watcher` 查询运行状态和 PID
   - 展示监控路径、排除记录数量和上次清理时间
+- `tm-watcher daemon restart`：
+  - 确认 daemon 正在运行，预检 Time Machine、配置文件和数据库，再停止并重新启动服务
 - `tm-watcher __daemon`：
   - 以前台进程运行多路径 watcher 和定期清理
   - 收到 SIGTERM 后优雅退出

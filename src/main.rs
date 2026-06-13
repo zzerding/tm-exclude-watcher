@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use tm_watcher::{
     CONFIG_RESTART_HINT, Cleaner, Config, ConfigUpdate, Database, LaunchAgentDoctorState,
     RealTmBackend, ScanDryRunEntry, ScanDryRunResult, Scanner, Watcher, check_tm_configured,
-    cmd_start, cmd_status, cmd_stop, expand_tilde_path, format_exclusion_list, logging,
-    run_doctor_checks,
+    cmd_restart, cmd_start, cmd_status, cmd_stop, expand_tilde_path, format_exclusion_list,
+    logging, run_doctor_checks,
 };
 
 fn main() {
@@ -431,8 +431,11 @@ fn cmd_daemon_command(args: &[String]) -> Result<()> {
 }
 
 fn cmd_daemon_restart_wrapper() -> Result<()> {
-    cmd_stop_wrapper()?;
-    cmd_start_wrapper()
+    let config_path = default_config_path()?;
+    let db_path = default_db_path()?;
+    let log_path = default_log_path()?;
+
+    cmd_restart(&config_path, &db_path, &log_path)
 }
 
 fn cmd_doctor_wrapper() -> Result<()> {
