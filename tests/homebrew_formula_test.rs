@@ -77,9 +77,9 @@ fn test_render_homebrew_formula_has_expected_tests_and_caveats() {
     assert!(formula.contains("assert_match \"tm-watcher\", shell_output"));
     assert!(formula.contains("tm-watcher --help"));
     assert!(formula.contains("tm-watcher is installed but not started automatically."));
-    assert!(formula.contains("tm-watcher start"));
-    assert!(formula.contains("tm-watcher status"));
-    assert!(formula.contains("tm-watcher stop"));
+    assert!(formula.contains("tm-watcher daemon start"));
+    assert!(formula.contains("tm-watcher daemon status"));
+    assert!(formula.contains("tm-watcher daemon stop"));
 }
 
 #[test]

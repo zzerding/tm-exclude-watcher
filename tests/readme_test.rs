@@ -26,19 +26,19 @@ fn test_readme_documents_homebrew_daemon_lifecycle() {
     let readme = readme();
 
     assert!(readme.contains("Homebrew 安装后不会自动启动 daemon"));
-    assert!(readme.contains("tm-watcher start"));
-    assert!(readme.contains("tm-watcher status"));
-    assert!(readme.contains("tm-watcher stop"));
-    assert!(readme.contains("tm-watcher stop && tm-watcher start"));
+    assert!(readme.contains("tm-watcher daemon start"));
+    assert!(readme.contains("tm-watcher daemon status"));
+    assert!(readme.contains("tm-watcher daemon stop"));
+    assert!(readme.contains("tm-watcher daemon restart"));
 }
 
 #[test]
 fn test_readme_documents_config_command() {
     let readme = readme();
 
-    assert!(readme.contains("tm-watcher config --show"));
-    assert!(readme.contains("tm-watcher config --add-path"));
-    assert!(readme.contains("tm-watcher config --add-rule"));
+    assert!(readme.contains("tm-watcher config show"));
+    assert!(readme.contains("tm-watcher config add-path"));
+    assert!(readme.contains("tm-watcher config add-rule"));
 }
 
 #[test]

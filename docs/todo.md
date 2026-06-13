@@ -17,7 +17,7 @@
 ## 剩余待办
 
 - [ ] Issue #6：端到端测试与发布准备。
-  - 需要真实 macOS/Time Machine 环境验证 `start` / `stop` / `status`。
+  - 需要真实 macOS/Time Machine 环境验证 `daemon start` / `daemon stop` / `daemon status`。
   - 需要验证 LaunchAgent plist、登录自启、异常重启和日志写入。
   - 需要补齐 `.gitignore` 发布项；当前只包含 `/target`。
   - README 已有基础使用说明，但发布前仍需按最终行为复查。

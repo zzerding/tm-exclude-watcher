@@ -18,7 +18,7 @@ Issue #4 实现过程中，守护进程生命周期已经重构为 `launchd` 托
 
 **开发约束：**
 - 生命周期管理应尽量交给 macOS 原生机制
-- `start` / `stop` / `status` 仍需保持简单的 CLI 入口
+- `daemon start` / `daemon stop` / `daemon status` 仍需保持简单的 CLI 入口
 - 守护进程主体应以前台进程运行，便于 `launchd` 管理和重启
 
 ## 决策
@@ -27,16 +27,16 @@ Issue #4 实现过程中，守护进程生命周期已经重构为 `launchd` 托
 
 当前行为：
 
-- `tm-watcher start`：
+- `tm-watcher daemon start`：
   - 预检 Time Machine、配置文件和数据库可访问性
   - 生成 `~/Library/LaunchAgents/com.zzerding.tm-watcher.plist`
   - 使用当前可执行文件路径作为 `ProgramArguments[0]`
   - 通过 `launchctl bootstrap gui/$UID <plist>` 启动服务
   - 静默清理旧版本遗留的 `~/.local/var/run/tm-watcher.pid`
-- `tm-watcher stop`：
+- `tm-watcher daemon stop`：
   - 通过 `launchctl bootout gui/$UID/com.zzerding.tm-watcher` 停止服务
   - 删除生成的 plist
-- `tm-watcher status`：
+- `tm-watcher daemon status`：
   - 通过 `launchctl print gui/$UID/com.zzerding.tm-watcher` 查询运行状态和 PID
   - 展示监控路径、排除记录数量和上次清理时间
 - `tm-watcher __daemon`：
@@ -77,11 +77,11 @@ plist 关键设置：
 ### 负面
 - **更依赖 macOS 行为：** 本地验证需要真实 `launchctl` 环境
 - **开发路径敏感：** plist 使用 `current_exe()`；开发模式下可能指向 `target/debug/tm-watcher`
-- **清理要求更明确：** `cargo clean` 删除开发二进制后，需要重新执行 `tm-watcher start`
+- **清理要求更明确：** `cargo clean` 删除开发二进制后，需要重新执行 `tm-watcher daemon start`
 
 ## 风险缓解
 
-- README 说明开发模式 plist 指向 `current_exe()`，`cargo clean` 后需重新 `start`
-- `start` 前预检 Time Machine、配置和数据库，避免 daemon 启动后立即失败造成 crash loop
-- `start` 静默清理旧 PID 文件残留，避免旧实现状态干扰新实现
-- Issue #6 负责真实 macOS/Time Machine 环境下的 `start` / `stop` / `status` E2E 验证
+- README 说明开发模式 plist 指向 `current_exe()`，`cargo clean` 后需重新执行 `tm-watcher daemon start`
+- `daemon start` 前预检 Time Machine、配置和数据库，避免 daemon 启动后立即失败造成 crash loop
+- `daemon start` 静默清理旧 PID 文件残留，避免旧实现状态干扰新实现
+- Issue #6 负责真实 macOS/Time Machine 环境下的 `daemon start` / `daemon stop` / `daemon status` E2E 验证

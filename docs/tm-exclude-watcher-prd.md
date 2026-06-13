@@ -130,18 +130,18 @@ tm-watcher clean
 
 **启动守护进程**
 ```bash
-tm-watcher start
+tm-watcher daemon start
 # 通过 macOS LaunchAgent 启动后台监控服务
 ```
 
 **停止守护进程**
 ```bash
-tm-watcher stop
+tm-watcher daemon stop
 ```
 
 **查看状态**
 ```bash
-tm-watcher status
+tm-watcher daemon status
 # 显示：监控路径、已排除目录数量、最后清理时间
 ```
 
@@ -149,9 +149,9 @@ tm-watcher status
 
 **配置管理**
 ```bash
-tm-watcher config --add-path ~/Projects
-tm-watcher config --add-rule "*.log"
-tm-watcher config --show
+tm-watcher config add-path ~/Projects
+tm-watcher config add-rule "*.log"
+tm-watcher config show
 ```
 
 **扫描预览（dry-run）**
@@ -268,7 +268,7 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [x] 文件系统监控（FSEvents API）
 - [x] 目录创建延迟确认（5秒）
 - [x] 目录删除实时清理
-- [x] 守护进程模式（`start` / `stop` / `status`）
+- [x] 守护进程模式（`daemon start` / `daemon stop` / `daemon status`）
 - [x] LaunchAgent 托管生命周期与 SIGTERM 优雅退出
 - [x] 定期清理任务（每 24 小时）
 - [x] 集成 `tracing` 日志系统（原 v0.3 规划，已提前发货）
@@ -276,17 +276,17 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [ ] 真实机器 E2E 验证与发布打磨
 
 **stable 闸门（2026-06-13 评审确定，全部通过则 rc 直接 promote 为 0.2.0）：**
-- 真机 E2E：`start` / `stop` / `status`、登录自启、崩溃重启、日志写入
+- 真机 E2E：`daemon start` / `daemon stop` / `daemon status`、登录自启、崩溃重启、日志写入
 - 三个错误场景：TM 未配置、重复 start、scan 不存在的路径
 - `.gitignore` 补齐、README 按最终行为复查
 - 性能基准降级为抽查（`top` 看一眼不离谱即可），精确指标验证推迟到有用户反馈时
 - rc 阶段不加任何新功能；发现 bug 修复后出 rc.3
 
 ### v0.3.0 - 信任与上手体验
-- [x] `config` 子命令（`--add-path` / `--add-rule` / `--show`，含"配置变更后 daemon 需重启"提示）
+- [x] `config` 子命令（`add-path` / `add-rule` / `show`，含"配置变更后 daemon 需重启"提示）
 - [ ] 白名单机制（名字匹配规则但不排除的目录，防误伤）
 - [x] `scan --dry-run` 预览模式（只列出将排除的目录，不执行）
-- [x] `status` 显示累计节省的备份空间
+- [x] `daemon status` 显示累计节省的备份空间
 - [x] `logs` 命令（查看 daemon 日志，支持 `-n` 行数和 `--follow` 实时追踪）
 - [x] `doctor` 命令（自检 Time Machine 配置、配置文件、数据库、daemon 状态、LaunchAgent）
 
@@ -315,7 +315,7 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 ### Homebrew
 ```bash
 brew install tm-watcher
-brew services start tm-watcher
+tm-watcher daemon start
 ```
 
 ### 源码编译

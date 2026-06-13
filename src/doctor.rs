@@ -162,7 +162,7 @@ fn open_database_for_doctor(db_path: &Path) -> Result<Database> {
 fn check_daemon(launch_agent: LaunchAgentDoctorState) -> DoctorCheck {
     match launch_agent.pid {
         Some(pid) => DoctorCheck::pass(format!("Daemon 正在运行 (PID: {})", pid)),
-        None => DoctorCheck::fail("Daemon 未运行（使用 `tm-watcher start` 启动）"),
+        None => DoctorCheck::fail("Daemon 未运行（使用 `tm-watcher daemon start` 启动）"),
     }
 }
 
@@ -170,9 +170,11 @@ fn check_launch_agent_plist(launch_agent: LaunchAgentDoctorState) -> DoctorCheck
     match (launch_agent.plist_exists, launch_agent.is_loaded) {
         (true, true) => DoctorCheck::pass("LaunchAgent plist 已加载"),
         (true, false) => {
-            DoctorCheck::warn("LaunchAgent plist 未加载（使用 `tm-watcher start` 重新加载）")
+            DoctorCheck::warn("LaunchAgent plist 未加载（使用 `tm-watcher daemon start` 重新加载）")
         }
-        (false, _) => DoctorCheck::warn("LaunchAgent plist 不存在（使用 `tm-watcher start` 创建）"),
+        (false, _) => {
+            DoctorCheck::warn("LaunchAgent plist 不存在（使用 `tm-watcher daemon start` 创建）")
+        }
     }
 }
 

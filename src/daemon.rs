@@ -332,7 +332,7 @@ fn warn_if_launch_agent_uses_stale_binary() {
         println!("警告: LaunchAgent 仍指向旧的 tm-watcher 二进制路径");
         println!("  旧路径: {}", configured_path.display());
         println!("  当前路径: {}", current_path.display());
-        println!("  修复: tm-watcher stop && tm-watcher start");
+        println!("  修复: tm-watcher daemon stop && tm-watcher daemon start");
         println!();
     }
 }
