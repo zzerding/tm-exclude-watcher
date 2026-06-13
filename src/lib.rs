@@ -15,7 +15,7 @@ mod tm_backend;
 mod watcher;
 
 pub use cleaner::{CleanResult, Cleaner};
-pub use config::Config;
+pub use config::{CONFIG_RESTART_HINT, Config, ConfigUpdate, expand_tilde_path};
 pub use daemon::{check_tm_configured, cmd_start, cmd_status, cmd_stop, run_periodic_cleanup};
 pub use database::{Database, ExclusionRecord};
 pub use doctor::{LaunchAgentDoctorState, run_doctor_checks};

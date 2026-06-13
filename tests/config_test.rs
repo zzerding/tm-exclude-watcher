@@ -1,7 +1,7 @@
 // ABOUTME: 配置管理测试 - 验证默认配置生成和加载
 
 use tempfile::TempDir;
-use tm_watcher::Config;
+use tm_watcher::{Config, ConfigUpdate};
 
 #[test]
 fn test_load_or_create_generates_default_config() {
@@ -54,4 +54,65 @@ fn test_load_or_create_creates_parent_dirs() {
     let config = Config::load_or_create(&config_path).unwrap();
     assert!(config_path.exists());
     assert!(!config.exclude_rules.is_empty());
+}
+
+#[test]
+fn test_config_update_adds_rule_and_skips_duplicate() {
+    let mut config = Config::default_config();
+
+    assert_eq!(
+        config.add_rule(".pytest_cache").unwrap(),
+        ConfigUpdate::Updated("已添加排除规则: .pytest_cache".to_string())
+    );
+    assert_eq!(
+        config.add_rule(".pytest_cache").unwrap(),
+        ConfigUpdate::Skipped("排除规则已存在，跳过: .pytest_cache".to_string())
+    );
+}
+
+#[test]
+fn test_config_update_detects_parent_child_path_conflicts_by_components() {
+    let temp_dir = TempDir::new().unwrap();
+    let mut config = Config {
+        watch_paths: vec![
+            temp_dir
+                .path()
+                .join("foo/bar")
+                .to_string_lossy()
+                .into_owned(),
+        ],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        config
+            .add_path(&temp_dir.path().join("foo/bar/baz"))
+            .unwrap(),
+        ConfigUpdate::Skipped(format!(
+            "监控路径已被 {} 覆盖，跳过",
+            temp_dir.path().join("foo/bar").display()
+        ))
+    );
+    assert_eq!(
+        config.add_path(&temp_dir.path().join("foo")).unwrap(),
+        ConfigUpdate::Skipped(format!(
+            "监控路径将覆盖 {}，跳过",
+            temp_dir.path().join("foo/bar").display()
+        ))
+    );
+    assert_eq!(
+        config.add_path(&temp_dir.path().join("foo/bar2")).unwrap(),
+        ConfigUpdate::Updated(format!(
+            "已添加监控路径: {}",
+            temp_dir.path().join("foo/bar2").display()
+        ))
+    );
+}
+
+#[test]
+fn test_expand_tilde_path_expands_bare_home() {
+    assert_eq!(
+        tm_watcher::expand_tilde_path("~"),
+        dirs::home_dir().unwrap()
+    );
 }

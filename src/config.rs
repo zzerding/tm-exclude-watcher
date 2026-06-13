@@ -2,7 +2,16 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub const CONFIG_RESTART_HINT: &str =
+    "配置已更新，请运行 'tm-watcher stop && tm-watcher start' 重启 daemon 使其生效";
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConfigUpdate {
+    Updated(String),
+    Skipped(String),
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -94,6 +103,126 @@ impl Config {
             .with_context(|| format!("无法写入配置文件: {}", path.display()))?;
 
         Ok(config)
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("无法创建配置目录: {}", parent.display()))?;
+        }
+        let content = toml::to_string_pretty(self)?;
+        std::fs::write(path, content)
+            .with_context(|| format!("无法写入配置文件: {}", path.display()))
+    }
+
+    pub fn add_rule(&mut self, rule: &str) -> Result<ConfigUpdate> {
+        if self.exclude_rules.iter().any(|existing| existing == rule) {
+            return Ok(ConfigUpdate::Skipped(format!(
+                "排除规则已存在，跳过: {rule}"
+            )));
+        }
+
+        self.exclude_rules.push(rule.to_string());
+        Ok(ConfigUpdate::Updated(format!("已添加排除规则: {rule}")))
+    }
+
+    pub fn add_path(&mut self, path: &Path) -> Result<ConfigUpdate> {
+        let path = path.to_path_buf();
+        let existing_paths: Vec<PathBuf> = self.watch_paths.iter().map(expand_tilde_path).collect();
+
+        if let Some(existing) = existing_paths.iter().find(|existing| *existing == &path) {
+            return Ok(ConfigUpdate::Skipped(format!(
+                "监控路径已存在，跳过: {}",
+                existing.display()
+            )));
+        }
+
+        if let Some(parent) = existing_paths
+            .iter()
+            .find(|existing| path.starts_with(existing.as_path()))
+        {
+            return Ok(ConfigUpdate::Skipped(format!(
+                "监控路径已被 {} 覆盖，跳过",
+                parent.display()
+            )));
+        }
+
+        let covered_paths: Vec<&PathBuf> = existing_paths
+            .iter()
+            .filter(|existing| existing.starts_with(&path))
+            .collect();
+        if !covered_paths.is_empty() {
+            let covered = covered_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join("、");
+            return Ok(ConfigUpdate::Skipped(format!(
+                "监控路径将覆盖 {covered}，跳过"
+            )));
+        }
+
+        self.watch_paths.push(path.display().to_string());
+        Ok(ConfigUpdate::Updated(format!(
+            "已添加监控路径: {}",
+            path.display()
+        )))
+    }
+
+    pub fn render(&self, config_path: &Path) -> String {
+        let mut output = format!("配置文件: {}\n\n", format_config_path(config_path));
+        output.push_str("监控路径:\n");
+        append_items(&mut output, &self.watch_paths);
+        output.push('\n');
+        output.push_str("排除规则:\n");
+        append_items(&mut output, &self.exclude_rules);
+        output.push('\n');
+        output.push_str(&format!(
+            "确认延迟: {} 秒\n",
+            self.confirmation_delay_seconds
+        ));
+        output.push_str(&format!(
+            "删除时清理: {}\n",
+            if self.cleanup_on_delete { "是" } else { "否" }
+        ));
+        output.push_str(&format!("定期清理间隔: {} 小时\n", self.interval_hours));
+        output
+    }
+}
+
+pub fn expand_tilde_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    let path_text = path.to_string_lossy();
+    if path_text == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
+    }
+    if let Some(rest) = path_text.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
+    }
+    path.to_path_buf()
+}
+
+fn format_config_path(path: &Path) -> String {
+    let Some(home) = dirs::home_dir() else {
+        return path.display().to_string();
+    };
+    match path.strip_prefix(&home) {
+        Ok(relative) => format!("~/{}", relative.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+fn append_items(output: &mut String, items: &[String]) {
+    if items.is_empty() {
+        output.push_str("  无\n");
+        return;
+    }
+    for item in items {
+        output.push_str(&format!("  - {item}\n"));
     }
 }
 

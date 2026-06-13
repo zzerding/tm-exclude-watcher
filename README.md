@@ -161,7 +161,20 @@ tm-watcher logs --follow
 
 默认排除规则包括：`node_modules`、`target`、`vendor`、`.venv`、`venv`、`__pycache__`、`build`、`dist`、`.next`、`.nuxt`、`.cache` 等常见开发依赖目录。
 
-可手动编辑配置文件来自定义规则和监控路径。
+使用 `tm-watcher config` 查看或更新监控路径和排除规则：
+
+```bash
+# 查看当前配置
+tm-watcher config --show
+
+# 添加监控路径
+tm-watcher config --add-path ~/Projects
+
+# 添加排除规则
+tm-watcher config --add-rule ".pytest_cache"
+```
+
+配置变更后，运行 `tm-watcher stop && tm-watcher start` 重启 daemon 使其生效。
 
 ## 工作原理
 
@@ -180,6 +193,7 @@ tm-watcher logs --follow
 - [x] GitHub Release macOS 双架构资产（v0.2）
 - [x] Homebrew formula 生成和 tap 更新 workflow（v0.2）
 - [x] 日志查看命令（v0.3）
+- [x] 配置管理命令（v0.3）
 - [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.2）
 
 当前版本：**v0.2.0**

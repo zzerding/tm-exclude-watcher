@@ -3,9 +3,10 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tm_watcher::{
-    Cleaner, Config, Database, LaunchAgentDoctorState, RealTmBackend, ScanDryRunEntry,
-    ScanDryRunResult, Scanner, Watcher, check_tm_configured, cmd_start, cmd_status, cmd_stop,
-    format_exclusion_list, logging, run_doctor_checks,
+    CONFIG_RESTART_HINT, Cleaner, Config, ConfigUpdate, Database, LaunchAgentDoctorState,
+    RealTmBackend, ScanDryRunEntry, ScanDryRunResult, Scanner, Watcher, check_tm_configured,
+    cmd_start, cmd_status, cmd_stop, expand_tilde_path, format_exclusion_list, logging,
+    run_doctor_checks,
 };
 
 fn main() {
@@ -57,6 +58,7 @@ fn run() -> Result<()> {
         Some("list") => cmd_list(),
         Some("clean") => cmd_clean(),
         Some("logs") => cmd_logs_wrapper(&args[2..]),
+        Some("config") => cmd_config_wrapper(&args[2..]),
         Some("watch") => {
             let path = args.get(2).context("用法: tm-watcher watch <path>")?;
             cmd_watch(path)
@@ -83,6 +85,8 @@ const HELP_TEXT: &str = "tm-watcher - macOS Time Machine 自动排除工具
   tm-watcher clean          清理失效记录并检查排除状态
   tm-watcher logs [-n <行数>] [--follow]
                             显示 daemon 日志
+  tm-watcher config --show | --add-path <路径> | --add-rule <规则>
+                            显示或更新配置
   tm-watcher watch <path>   实时监控路径并自动排除匹配目录
   tm-watcher start          启动守护进程（后台监控+定期清理）
   tm-watcher stop           停止守护进程
@@ -226,6 +230,61 @@ fn cmd_clean() -> Result<()> {
 
 fn cmd_logs_wrapper(args: &[String]) -> Result<()> {
     tm_watcher::cmd_logs(&default_log_path()?, args)
+}
+
+fn cmd_config_wrapper(args: &[String]) -> Result<()> {
+    let config_path = default_config_path()?;
+    let operation = parse_config_operation(args)?;
+    let mut config = Config::load_or_create(&config_path)?;
+
+    match operation {
+        ConfigOperation::Show => {
+            print!("{}", config.render(&config_path));
+        }
+        ConfigOperation::AddPath(path) => {
+            let update = config.add_path(&expand_tilde_path(path))?;
+            print_config_update(update, &config, &config_path)?;
+        }
+        ConfigOperation::AddRule(rule) => {
+            let update = config.add_rule(&rule)?;
+            print_config_update(update, &config, &config_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+enum ConfigOperation {
+    Show,
+    AddPath(String),
+    AddRule(String),
+}
+
+fn parse_config_operation(args: &[String]) -> Result<ConfigOperation> {
+    match args {
+        [flag] if flag == "--show" => Ok(ConfigOperation::Show),
+        [flag, value] if flag == "--add-path" => Ok(ConfigOperation::AddPath(value.clone())),
+        [flag, value] if flag == "--add-rule" => Ok(ConfigOperation::AddRule(value.clone())),
+        _ => {
+            anyhow::bail!("用法: tm-watcher config --show | --add-path <路径> | --add-rule <规则>")
+        }
+    }
+}
+
+fn print_config_update(
+    update: ConfigUpdate,
+    config: &Config,
+    config_path: &std::path::Path,
+) -> Result<()> {
+    match update {
+        ConfigUpdate::Updated(message) => {
+            config.save(config_path)?;
+            println!("{message}");
+            println!("{CONFIG_RESTART_HINT}");
+        }
+        ConfigUpdate::Skipped(message) => println!("{message}"),
+    }
+    Ok(())
 }
 
 fn cmd_watch(path: &str) -> Result<()> {

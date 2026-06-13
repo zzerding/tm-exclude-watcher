@@ -212,13 +212,12 @@ exclude_rules = [
 ]
 
 # 清理策略（v0.2.0+）
-[cleanup]
-enabled = true
-interval_hours = 24        # 定期清理间隔
-cleanup_on_delete = true   # 检测到删除时立即清理
+# 更正（2026-06-13）：当前 schema 为扁平字段，不再使用 [cleanup] 表。
+cleanup_on_delete = true          # 检测到删除时立即清理
+interval_hours = 24               # 定期清理间隔
 
 # 行为配置（v0.2.0+）
-[behavior]
+# 更正（2026-06-13）：当前 schema 为扁平字段，不再使用 [behavior] 表。
 confirmation_delay_seconds = 5    # 确认延迟
 
 # 白名单（v0.3.0+ 规划）：名字匹配规则但不应被排除的目录
@@ -231,7 +230,7 @@ confirmation_delay_seconds = 5    # 确认延迟
 # 修正（2026-06-13 路线图评审）：大小过滤已从路线图移除——排除小目录无任何坏处，该配置只增加认知负担。
 ```
 
-**注：** v0.1.0 仅实现 `watch_paths` 和 `exclude_rules`，其他配置项为规划功能。
+**注：** v0.1.0 仅实现 `watch_paths` 和 `exclude_rules`；v0.2+ 已实现 `confirmation_delay_seconds`、`cleanup_on_delete`、`interval_hours` 顶层字段。
 
 ---
 
@@ -284,7 +283,7 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - rc 阶段不加任何新功能；发现 bug 修复后出 rc.3
 
 ### v0.3.0 - 信任与上手体验
-- [ ] `config` 子命令（`--add-path` / `--add-rule` / `--show`，含"配置变更后 daemon 需重启"提示）
+- [x] `config` 子命令（`--add-path` / `--add-rule` / `--show`，含"配置变更后 daemon 需重启"提示）
 - [ ] 白名单机制（名字匹配规则但不排除的目录，防误伤）
 - [x] `scan --dry-run` 预览模式（只列出将排除的目录，不执行）
 - [x] `status` 显示累计节省的备份空间

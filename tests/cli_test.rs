@@ -78,6 +78,10 @@ fn write_daemon_log(home: &TempDir, lines: &[String]) {
     fs::write(log_dir.join("daemon.log"), lines.join("\n")).unwrap();
 }
 
+fn config_path(home: &TempDir) -> std::path::PathBuf {
+    home.path().join(".config/tm-watcher/config.toml")
+}
+
 fn spawn_tm_watcher(args: &[&str], home: &TempDir) -> Child {
     Command::new(env!("CARGO_BIN_EXE_tm-watcher"))
         .args(args)
@@ -125,6 +129,7 @@ fn test_help_covers_public_commands_without_user_state() {
             "list",
             "clean",
             "logs",
+            "config",
             "watch <path>",
             "start",
             "stop",
@@ -195,6 +200,134 @@ fn test_status_reports_saved_space_regardless_of_daemon_state() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("状态:"));
     assert!(stdout.contains("累计节省空间: 约 1 GB (1 个目录已知大小，1 个未知)"));
+}
+
+#[test]
+fn test_config_show_prints_full_friendly_config() {
+    let home = TempDir::new().unwrap();
+
+    let output = run_tm_watcher(&["config", "--show"], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("配置文件:"));
+    assert!(stdout.contains("监控路径:"));
+    assert!(stdout.contains("排除规则:"));
+    assert!(stdout.contains("确认延迟: 5 秒"));
+    assert!(stdout.contains("删除时清理: 是"));
+    assert!(stdout.contains("定期清理间隔: 24 小时"));
+    assert!(!stdout.contains("重启 daemon"));
+    assert!(output.stderr.is_empty());
+    assert!(!home.path().join(".local/share/tm-watcher").exists());
+}
+
+#[test]
+fn test_config_add_rule_updates_config_and_prints_restart_hint() {
+    let home = TempDir::new().unwrap();
+
+    let output = run_tm_watcher(&["config", "--add-rule", ".pytest_cache"], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("已添加排除规则: .pytest_cache"));
+    assert!(
+        stdout.contains(
+            "配置已更新，请运行 'tm-watcher stop && tm-watcher start' 重启 daemon 使其生效"
+        )
+    );
+    let config = std::fs::read_to_string(config_path(&home)).unwrap();
+    assert!(config.contains("\".pytest_cache\""));
+}
+
+#[test]
+fn test_config_add_rule_skips_duplicate() {
+    let home = TempDir::new().unwrap();
+    let first = run_tm_watcher(&["config", "--add-rule", ".pytest_cache"], &home);
+    assert!(first.status.success());
+
+    let output = run_tm_watcher(&["config", "--add-rule", ".pytest_cache"], &home);
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "排除规则已存在，跳过: .pytest_cache\n"
+    );
+}
+
+#[test]
+fn test_config_add_path_expands_tilde_and_updates_config() {
+    let home = TempDir::new().unwrap();
+
+    let output = run_tm_watcher(&["config", "--add-path", "~/Workspace"], &home);
+
+    assert!(output.status.success());
+    let expanded = home.path().join("Workspace").to_string_lossy().into_owned();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains(&format!("已添加监控路径: {expanded}")));
+    let config = std::fs::read_to_string(config_path(&home)).unwrap();
+    assert!(config.contains(&format!("\"{expanded}\"")));
+}
+
+#[test]
+fn test_config_add_path_skips_child_covered_by_existing_parent() {
+    let home = TempDir::new().unwrap();
+    let first = run_tm_watcher(&["config", "--add-path", "~/Workspace"], &home);
+    assert!(first.status.success());
+
+    let output = run_tm_watcher(&["config", "--add-path", "~/Workspace/project"], &home);
+
+    assert!(output.status.success());
+    let expanded_parent = home.path().join("Workspace").to_string_lossy().into_owned();
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("监控路径已被 {expanded_parent} 覆盖，跳过\n")
+    );
+}
+
+#[test]
+fn test_config_add_path_skips_parent_covering_existing_children() {
+    let home = TempDir::new().unwrap();
+    let first = run_tm_watcher(&["config", "--add-path", "~/Workspace/project"], &home);
+    assert!(first.status.success());
+
+    let output = run_tm_watcher(&["config", "--add-path", "~/Workspace"], &home);
+
+    assert!(output.status.success());
+    let expanded_child = home
+        .path()
+        .join("Workspace/project")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("监控路径将覆盖 {expanded_child}，跳过\n")
+    );
+}
+
+#[test]
+fn test_config_rejects_multiple_operations() {
+    let home = TempDir::new().unwrap();
+
+    let output = run_tm_watcher(&["config", "--show", "--add-rule", ".cache"], &home);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("用法: tm-watcher config"));
+    assert!(!config_path(&home).exists());
+}
+
+#[test]
+fn test_config_malformed_file_reports_clear_error() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(config_path(&home).parent().unwrap()).unwrap();
+    fs::write(config_path(&home), "watch_paths = [").unwrap();
+
+    let output = run_tm_watcher(&["config", "--show"], &home);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("配置文件格式错误"));
+    assert!(stderr.contains("config.toml"));
 }
 
 #[test]
