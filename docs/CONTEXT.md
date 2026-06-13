@@ -297,3 +297,4 @@ confirmation_delay_seconds = 5
 - `doctor` 命令：执行 Time Machine、配置文件、数据库、daemon 和 LaunchAgent plist 健康检查；任何失败或警告返回非 0。
 - `scan --dry-run`：预览匹配目录并显示匹配规则；不调用 `tmutil`，不写数据库。
 - `logs` 命令：查看 daemon 日志尾部，支持 `-n <行数>` 和 `--follow`。
+- `status` 命令：显示数据库已知大小合计的累计节省空间；没有已知大小时提示运行 `tm-watcher clean` 更新大小信息。

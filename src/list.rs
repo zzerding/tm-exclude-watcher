@@ -60,6 +60,26 @@ pub fn format_exclusion_list(records: &[ExclusionRecord]) -> String {
     output
 }
 
+pub fn format_saved_space_summary(records: &[ExclusionRecord]) -> String {
+    let known_count = records
+        .iter()
+        .filter(|record| record.size_bytes.is_some())
+        .count();
+    if known_count == 0 {
+        return "累计节省空间: 未知（运行 'tm-watcher clean' 更新大小信息）".to_string();
+    }
+
+    let total_size: i64 = records.iter().filter_map(|record| record.size_bytes).sum();
+    let unknown_count = records.len() - known_count;
+
+    format!(
+        "累计节省空间: 约 {} ({} 个目录已知大小，{} 个未知)",
+        format_size(Some(total_size)),
+        known_count,
+        unknown_count
+    )
+}
+
 struct ListRow {
     index: String,
     size: String,

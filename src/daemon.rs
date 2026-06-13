@@ -3,8 +3,8 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
-use crate::Database;
 use crate::TmBackend;
+use crate::{Database, format_saved_space_summary};
 
 /// 定期清理任务
 pub async fn run_periodic_cleanup<F>(
@@ -296,6 +296,9 @@ pub fn cmd_status(config: &crate::Config, database: &Database) -> Result<()> {
         false
     };
 
+    let records = database.get_exclusions()?;
+    println!("{}", format_saved_space_summary(&records));
+
     if running {
         // 显示监控路径
         println!("\n监控路径:");
@@ -305,7 +308,6 @@ pub fn cmd_status(config: &crate::Config, database: &Database) -> Result<()> {
         }
 
         // 显示已排除目录数量
-        let records = database.get_exclusions()?;
         println!("\n已排除目录: {} 个", records.len());
 
         // 显示最后清理时间

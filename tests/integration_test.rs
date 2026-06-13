@@ -3,7 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-use tm_watcher::{Cleaner, Config, Database, Scanner, TmBackend, format_exclusion_list};
+use tm_watcher::{
+    Cleaner, Config, Database, Scanner, TmBackend, format_exclusion_list,
+    format_saved_space_summary,
+};
 
 #[test]
 fn test_scan_and_exclude_matching_dirs() {
@@ -336,6 +339,42 @@ fn test_format_exclusion_list_uses_automatic_size_units() {
     assert!(output.contains("1.5 MB"));
     assert!(output.contains("2.3 GB"));
     assert!(output.contains("1 TB"));
+}
+
+#[test]
+fn test_format_saved_space_summary_reports_known_and_unknown_counts() {
+    let records = vec![
+        exclusion_record(
+            "/tmp/node_modules",
+            "node_modules",
+            Some(1024_i64.pow(3)),
+            None,
+        ),
+        exclusion_record("/tmp/target", "target", Some(512 * 1024 * 1024), None),
+        exclusion_record("/tmp/vendor", "vendor", None, None),
+    ];
+
+    let output = format_saved_space_summary(&records);
+
+    assert_eq!(
+        output,
+        "累计节省空间: 约 1.5 GB (2 个目录已知大小，1 个未知)"
+    );
+}
+
+#[test]
+fn test_format_saved_space_summary_reports_unknown_without_known_sizes() {
+    let records = vec![
+        exclusion_record("/tmp/node_modules", "node_modules", None, None),
+        exclusion_record("/tmp/target", "target", None, None),
+    ];
+
+    let output = format_saved_space_summary(&records);
+
+    assert_eq!(
+        output,
+        "累计节省空间: 未知（运行 'tm-watcher clean' 更新大小信息）"
+    );
 }
 
 fn exclusion_record(
