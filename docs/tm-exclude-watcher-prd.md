@@ -145,13 +145,42 @@ tm-watcher status
 # 显示：监控路径、已排除目录数量、最后清理时间
 ```
 
-#### v0.4.0 - 计划中
+#### v0.3.0 - 计划中
 
 **配置管理**
 ```bash
 tm-watcher config --add-path ~/Projects
 tm-watcher config --add-rule "*.log"
 tm-watcher config --show
+```
+
+**扫描预览（dry-run）**
+```bash
+tm-watcher scan --dry-run ~/Documents/src
+# 只列出将被排除的目录，不调用 tmutil，不写数据库
+```
+
+**日志查看**
+```bash
+tm-watcher logs
+# 显示 daemon 日志最近 50 行（默认）
+
+tm-watcher logs -n 100
+# 显示最近 100 行
+
+tm-watcher logs --follow
+# 实时追踪日志输出
+```
+
+**健康检查**
+```bash
+tm-watcher doctor
+# 自检并输出诊断报告：
+# - Time Machine 是否已配置
+# - 配置文件是否有效
+# - 数据库是否可访问
+# - Daemon 是否正在运行
+# - LaunchAgent plist 状态
 ```
 
 ---
@@ -192,8 +221,14 @@ cleanup_on_delete = true   # 检测到删除时立即清理
 [behavior]
 confirmation_delay_seconds = 5    # 确认延迟
 
+# 白名单（v0.3.0+ 规划）：名字匹配规则但不应被排除的目录
+# whitelist_paths = [
+#     "~/Code/my-app/build",       # 撞名 build 规则但实际是源码目录
+# ]
+
 # 高级功能（v0.4.0+）
 # min_directory_size_mb = 100     # 只排除大于此值的目录（可选）
+# 修正（2026-06-13 路线图评审）：大小过滤已从路线图移除——排除小目录无任何坏处，该配置只增加认知负担。
 ```
 
 **注：** v0.1.0 仅实现 `watch_paths` 和 `exclude_rules`，其他配置项为规划功能。
@@ -237,24 +272,32 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [x] 守护进程模式（`start` / `stop` / `status`）
 - [x] LaunchAgent 托管生命周期与 SIGTERM 优雅退出
 - [x] 定期清理任务（每 24 小时）
+- [x] 集成 `tracing` 日志系统（原 v0.3 规划，已提前发货）
+- [x] CLI stderr 与 daemon log 文件分离（原 v0.3 规划，已提前发货）
 - [ ] 真实机器 E2E 验证与发布打磨
 
-### v0.3.0 - 日志与可观测性
-- [ ] 集成 `tracing` 日志系统
-- [ ] CLI stderr 与 daemon log 文件分离
-- [ ] 操作审计日志
-- [ ] 用户通知（macOS 通知中心）
+**stable 闸门（2026-06-13 评审确定，全部通过则 rc 直接 promote 为 0.2.0）：**
+- 真机 E2E：`start` / `stop` / `status`、登录自启、崩溃重启、日志写入
+- 三个错误场景：TM 未配置、重复 start、scan 不存在的路径
+- `.gitignore` 补齐、README 按最终行为复查
+- 性能基准降级为抽查（`top` 看一眼不离谱即可），精确指标验证推迟到有用户反馈时
+- rc 阶段不加任何新功能；发现 bug 修复后出 rc.3
 
-### v0.4.0 - 高级配置
-- [ ] 目录大小过滤（`min_directory_size_mb`）
-- [ ] 白名单机制（不排除某些特定目录）
+### v0.3.0 - 信任与上手体验
+- [ ] `config` 子命令（`--add-path` / `--add-rule` / `--show`，含"配置变更后 daemon 需重启"提示）
+- [ ] 白名单机制（名字匹配规则但不排除的目录，防误伤）
+- [ ] `scan --dry-run` 预览模式（只列出将排除的目录，不执行）
+- [ ] `status` 显示累计节省的备份空间
+- [ ] `logs` 命令（查看 daemon 日志，支持 `-n` 行数和 `--follow` 实时追踪）
+- [ ] `doctor` 命令（自检 Time Machine 配置、配置文件、数据库、daemon 状态、LaunchAgent）
+
+### v0.4.0 - 高级配置（需求驱动，等用户反馈）
 - [ ] 自定义规则支持（glob 模式）
-- [ ] 排除前预览与确认模式
-- [ ] 配置管理命令（`config --add-path` / `--add-rule`）
+- [ ] 用户通知（macOS 通知中心，默认关闭）
 
 ### v1.0.0 - 生产就绪
-- [ ] GUI 状态栏应用（可选）
-- [ ] Homebrew 发布
+- [ ] GUI 状态栏应用（可选，CLI 用户群成熟前不启动）
+- [x] Homebrew formula 生成与 tap 更新 workflow（已在 v0.2 完成）
 - [ ] 完整文档和测试覆盖
 
 ---
@@ -339,7 +382,7 @@ cargo install --path .
 
 ---
 
-**文档版本：** v1.0  
-**最后更新：** 2026-06-10  
+**文档版本：** v1.1（2026-06-13 路线图评审：v0.3/v0.4 按"信任 > 上手 > 锦上添花"重排，砍掉大小过滤，补充 v0.2 stable 闸门定义）  
+**最后更新：** 2026-06-13  
 **作者：** Doctor Biz  
 **License：** MIT
