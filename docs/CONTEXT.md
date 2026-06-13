@@ -222,7 +222,7 @@ confirmation_delay_seconds = 5
 使用 `tracing-appender` 的 rolling writer 写入固定文件 `daemon.log`；当前不实现日志保留、压缩或清理策略。后续版本可加入"保留最近 7 天"策略。
 
 **查看命令：**
-当前手动运行 `tail -f ~/.local/share/tm-watcher/daemon.log` 实时查看守护进程日志。
+`tm-watcher logs` 默认显示 `daemon.log` 最后 50 行；`tm-watcher logs -n <行数>` 控制显示行数；`tm-watcher logs --follow` 实时追踪新增日志。
 
 ### 数据存储 (Data Storage)
 使用 SQLite 存储排除记录，文件位于 `~/.local/share/tm-watcher/exclusions.db`。
@@ -287,7 +287,6 @@ confirmation_delay_seconds = 5
 - **Homebrew 安装：** stable 发布自动更新 `zzerding/homebrew-tap` formula，安装后不自动启动 daemon
 
 ### 推迟到后续版本
-- `logs` 命令（用户可手动 `tail -f ~/.local/share/tm-watcher/daemon.log`）
 - `config` 命令（用户可手动编辑 `~/.config/tm-watcher/config.toml`）
 - macOS 通知中心集成
 - 日志轮转
@@ -297,3 +296,4 @@ confirmation_delay_seconds = 5
 ### 已进入实现
 - `doctor` 命令：执行 Time Machine、配置文件、数据库、daemon 和 LaunchAgent plist 健康检查；任何失败或警告返回非 0。
 - `scan --dry-run`：预览匹配目录并显示匹配规则；不调用 `tmutil`，不写数据库。
+- `logs` 命令：查看 daemon 日志尾部，支持 `-n <行数>` 和 `--follow`。

@@ -39,7 +39,6 @@ fn test_readme_does_not_promise_unshipped_release_features() {
         "brew services",
         "service do",
         "tm-watcher doctor",
-        "tm-watcher logs",
         "tm-watcher config",
         "Homebrew service",
         "notarization",
