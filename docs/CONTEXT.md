@@ -285,3 +285,8 @@ confirmation_delay_seconds = 5
 - `config` 命令（用户可手动编辑 `~/.config/tm-watcher/config.toml`）
 - macOS 通知中心集成
 - 日志轮转
+
+## v0.3.0 开发范围
+
+### 已进入实现
+- `doctor` 命令：执行 Time Machine、配置文件、数据库、daemon 和 LaunchAgent plist 健康检查；任何失败或警告返回非 0。
