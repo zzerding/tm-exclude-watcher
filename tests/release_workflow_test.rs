@@ -22,12 +22,15 @@ fn publish_job(workflow: &str) -> &str {
 }
 
 #[test]
-fn test_homebrew_tap_update_is_stable_tag_only() {
+fn test_homebrew_tap_update_is_stable_tag_or_explicit_repair_only() {
     let workflow = release_workflow();
     let job = homebrew_tap_job(&workflow);
 
     assert!(job.contains("needs.gate.outputs.is_tag_release == 'true'"));
+    assert!(job.contains("inputs.update_homebrew_tap == true"));
     assert!(job.contains("needs.gate.outputs.is_prerelease != 'true'"));
+    assert!(workflow.contains("update_homebrew_tap:"));
+    assert!(workflow.contains("Update Homebrew tap for an existing stable release"));
 }
 
 #[test]
@@ -72,6 +75,18 @@ fn test_publish_job_checks_out_source_before_release_create() {
     assert!(download_archives < create_release);
     assert!(job.contains("uses: actions/checkout@v4"));
     assert!(job.contains("--verify-tag"));
+    assert!(job.contains("Require existing release for Homebrew tap repair"));
+    assert!(job.contains("needs.gate.outputs.is_tag_release == 'true' && steps.existing_release.outputs.release_exists != 'true'"));
+    assert!(job.contains("workflow_dispatch Homebrew tap repair requires an existing release"));
+}
+
+#[test]
+fn test_homebrew_tap_downloads_checksums_with_explicit_repo() {
+    let workflow = release_workflow();
+    let job = homebrew_tap_job(&workflow);
+
+    assert!(job.contains("gh release download \"${{ needs.gate.outputs.tag }}\""));
+    assert!(job.contains("--repo \"${{ github.repository }}\""));
 }
 
 #[test]
