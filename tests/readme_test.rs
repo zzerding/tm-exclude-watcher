@@ -33,13 +33,21 @@ fn test_readme_documents_homebrew_daemon_lifecycle() {
 }
 
 #[test]
+fn test_readme_documents_config_command() {
+    let readme = readme();
+
+    assert!(readme.contains("tm-watcher config --show"));
+    assert!(readme.contains("tm-watcher config --add-path"));
+    assert!(readme.contains("tm-watcher config --add-rule"));
+}
+
+#[test]
 fn test_readme_does_not_promise_unshipped_release_features() {
     let readme = readme();
     let unsupported_phrases = [
         "brew services",
         "service do",
         "tm-watcher doctor",
-        "tm-watcher config",
         "Homebrew service",
         "notarization",
         "GUI",

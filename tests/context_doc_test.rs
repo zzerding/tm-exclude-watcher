@@ -19,10 +19,18 @@ fn test_context_documents_current_release_model() {
 }
 
 #[test]
+fn test_context_documents_config_command() {
+    let context = context_doc();
+
+    assert!(context.contains("tm-watcher config --show"));
+    assert!(context.contains("--add-path"));
+    assert!(context.contains("--add-rule"));
+}
+
+#[test]
 fn test_context_does_not_promise_unshipped_commands_or_old_homebrew_plan() {
     let context = context_doc();
 
-    assert!(!context.contains("tm-watcher config --"));
     assert!(!context.contains("### 推迟到 v1.0.0"));
     assert!(!context.contains("- Homebrew 发布"));
 }

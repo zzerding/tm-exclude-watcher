@@ -157,28 +157,23 @@ exclude_rules = [
     ".venv", "venv", "virtualenv", "__pycache__",
     "build", "dist", ".next", ".nuxt", ".cache"
 ]
-
-[cleanup]
-enabled = true
-interval_hours = 24
 cleanup_on_delete = true
-
-[behavior]
 confirmation_delay_seconds = 5
+interval_hours = 24
 ```
 
 **配置说明：**
 - 默认监控常见开发目录（路径不存在也不报错，静默跳过）
-- 用户当前通过手动编辑 `~/.config/tm-watcher/config.toml` 调整
+- 用户通过 `tm-watcher config --show` 查看配置，通过 `--add-path` / `--add-rule` 添加监控路径和排除规则
+- 配置变更后需要运行 `tm-watcher stop && tm-watcher start` 重启 daemon 使其生效
 - 真正零配置：安装后直接 `tm-watcher start` 即可工作
 
 **配置内容：**
 - `watch_paths`：要监控的根目录列表
 - `exclude_rules`：目录名匹配规则列表
-- `cleanup.enabled`：是否启用定期清理
-- `cleanup.interval_hours`：定期清理间隔（小时）
-- `cleanup.cleanup_on_delete`：是否启用实时清理
-- `behavior.confirmation_delay_seconds`：确认延迟（秒）
+- `confirmation_delay_seconds`：确认延迟（秒）
+- `cleanup_on_delete`：是否启用实时清理
+- `interval_hours`：定期清理间隔（小时）
 
 **未来扩展（v0.3+）：**
 可通过 `whitelist_paths` 实现特定路径的排除豁免（例如某些特殊项目的依赖需要备份）。
@@ -287,7 +282,6 @@ confirmation_delay_seconds = 5
 - **Homebrew 安装：** stable 发布自动更新 `zzerding/homebrew-tap` formula，安装后不自动启动 daemon
 
 ### 推迟到后续版本
-- `config` 命令（用户可手动编辑 `~/.config/tm-watcher/config.toml`）
 - macOS 通知中心集成
 - 日志轮转
 
@@ -298,3 +292,4 @@ confirmation_delay_seconds = 5
 - `scan --dry-run`：预览匹配目录并显示匹配规则；不调用 `tmutil`，不写数据库。
 - `logs` 命令：查看 daemon 日志尾部，支持 `-n <行数>` 和 `--follow`。
 - `status` 命令：显示数据库已知大小合计的累计节省空间；没有已知大小时提示运行 `tm-watcher clean` 更新大小信息。
+- `config` 命令：支持 `--show`、`--add-path <路径>`、`--add-rule <规则>`；更新配置后提示重启 daemon。
