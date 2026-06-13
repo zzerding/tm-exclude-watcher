@@ -142,6 +142,19 @@ tm-watcher stop
 - `cargo clean` 后需重新执行 `tm-watcher start`
 - 手动替换二进制后可用 `tm-watcher status` 检查是否需要重启 daemon
 
+### 查看 daemon 日志
+
+```bash
+# 显示最近 50 行
+tm-watcher logs
+
+# 显示最近 100 行
+tm-watcher logs -n 100
+
+# 实时追踪
+tm-watcher logs --follow
+```
+
 ## 配置
 
 配置文件位于 `~/.config/tm-watcher/config.toml`，首次运行时自动生成。
@@ -166,6 +179,7 @@ tm-watcher stop
 - [x] 日志和可观测性（v0.2）
 - [x] GitHub Release macOS 双架构资产（v0.2）
 - [x] Homebrew formula 生成和 tap 更新 workflow（v0.2）
+- [x] 日志查看命令（v0.3）
 - [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.2）
 
 当前版本：**v0.2.0**

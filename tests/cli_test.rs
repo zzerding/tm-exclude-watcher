@@ -2,7 +2,9 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::Output;
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 use tempfile::TempDir;
 
 fn run_tm_watcher(args: &[&str], home: &TempDir) -> std::process::Output {
@@ -66,6 +68,28 @@ fn write_exclusion_record(home: &TempDir, path: &Path, rule: &str) {
     .unwrap();
 }
 
+fn write_daemon_log(home: &TempDir, lines: &[String]) {
+    let log_dir = home.path().join(".local/share/tm-watcher");
+    fs::create_dir_all(&log_dir).unwrap();
+    fs::write(log_dir.join("daemon.log"), lines.join("\n")).unwrap();
+}
+
+fn spawn_tm_watcher(args: &[&str], home: &TempDir) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_tm-watcher"))
+        .args(args)
+        .env("HOME", home.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+fn collect_follow_output(mut child: Child) -> Output {
+    std::thread::sleep(Duration::from_millis(500));
+    let _ = child.kill();
+    child.wait_with_output().unwrap()
+}
+
 #[test]
 fn test_version_outputs_package_version_without_user_state() {
     for arg in ["--version", "-V"] {
@@ -96,6 +120,7 @@ fn test_help_covers_public_commands_without_user_state() {
             "scan <path>",
             "list",
             "clean",
+            "logs",
             "watch <path>",
             "start",
             "stop",
@@ -227,4 +252,119 @@ fn test_scan_dry_run_reports_recorded_paths_as_skipped() {
     assert!(stdout.contains("匹配规则: target"));
     assert!(stdout.contains("已跳过（之前已排除）: 1 个"));
     assert!(stdout.contains("~/Code/project-a/node_modules"));
+}
+
+#[test]
+fn test_logs_defaults_to_last_50_lines() {
+    let home = TempDir::new().unwrap();
+    let lines: Vec<String> = (1..=60).map(|line| format!("line {line}")).collect();
+    write_daemon_log(&home, &lines);
+
+    let output = run_tm_watcher(&["logs"], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("line 10\n"));
+    assert!(stdout.contains("line 11\n"));
+    assert!(stdout.contains("line 60"));
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn test_logs_line_count_option_controls_tail_size() {
+    let home = TempDir::new().unwrap();
+    let lines: Vec<String> = (1..=120).map(|line| format!("line {line}")).collect();
+    write_daemon_log(&home, &lines);
+
+    let output = run_tm_watcher(&["logs", "-n", "100"], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("line 20\n"));
+    assert!(stdout.contains("line 21\n"));
+    assert!(stdout.contains("line 120"));
+}
+
+#[test]
+fn test_logs_missing_file_reports_friendly_message() {
+    let home = TempDir::new().unwrap();
+    let output = run_tm_watcher(&["logs"], &home);
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "日志文件不存在，daemon 可能未曾运行过\n"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn test_logs_empty_file_reports_friendly_message() {
+    let home = TempDir::new().unwrap();
+    write_daemon_log(&home, &[]);
+
+    let output = run_tm_watcher(&["logs"], &home);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "日志为空\n");
+}
+
+#[test]
+fn test_logs_follow_empty_file_prints_appended_lines() {
+    let home = TempDir::new().unwrap();
+    write_daemon_log(&home, &[]);
+
+    let child = spawn_tm_watcher(&["logs", "--follow"], &home);
+    std::thread::sleep(Duration::from_millis(100));
+    fs::write(
+        home.path().join(".local/share/tm-watcher/daemon.log"),
+        "appended\n",
+    )
+    .unwrap();
+
+    let output = collect_follow_output(child);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("日志为空"));
+    assert!(stdout.contains("appended"));
+}
+
+#[test]
+fn test_logs_follow_prints_appended_lines() {
+    let home = TempDir::new().unwrap();
+    write_daemon_log(&home, &[String::from("initial")]);
+
+    let child = spawn_tm_watcher(&["logs", "--follow"], &home);
+    std::thread::sleep(Duration::from_millis(100));
+    fs::write(
+        home.path().join(".local/share/tm-watcher/daemon.log"),
+        "initial\nappended\n",
+    )
+    .unwrap();
+
+    let output = collect_follow_output(child);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("initial"));
+    assert!(stdout.contains("appended"));
+}
+
+#[test]
+fn test_logs_follow_combines_with_line_count() {
+    let home = TempDir::new().unwrap();
+    let lines: Vec<String> = (1..=30).map(|line| format!("line {line}")).collect();
+    write_daemon_log(&home, &lines);
+
+    let child = spawn_tm_watcher(&["logs", "-n", "20", "--follow"], &home);
+    std::thread::sleep(Duration::from_millis(100));
+    let mut updated_lines = lines;
+    updated_lines.push(String::from("line 31"));
+    write_daemon_log(&home, &updated_lines);
+
+    let output = collect_follow_output(child);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(!stdout.contains("line 10\n"));
+    assert!(stdout.contains("line 11\n"));
+    assert!(stdout.contains("line 31"));
 }

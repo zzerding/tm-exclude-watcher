@@ -288,7 +288,7 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [ ] 白名单机制（名字匹配规则但不排除的目录，防误伤）
 - [x] `scan --dry-run` 预览模式（只列出将排除的目录，不执行）
 - [ ] `status` 显示累计节省的备份空间
-- [ ] `logs` 命令（查看 daemon 日志，支持 `-n` 行数和 `--follow` 实时追踪）
+- [x] `logs` 命令（查看 daemon 日志，支持 `-n` 行数和 `--follow` 实时追踪）
 - [x] `doctor` 命令（自检 Time Machine 配置、配置文件、数据库、daemon 状态、LaunchAgent）
 
 ### v0.4.0 - 高级配置（需求驱动，等用户反馈）

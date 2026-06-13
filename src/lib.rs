@@ -8,6 +8,7 @@ mod doctor;
 mod launchd;
 mod list;
 pub mod logging;
+mod logs;
 mod rules;
 mod scanner;
 mod tm_backend;
@@ -19,6 +20,7 @@ pub use daemon::{check_tm_configured, cmd_start, cmd_status, cmd_stop, run_perio
 pub use database::{Database, ExclusionRecord};
 pub use doctor::{LaunchAgentDoctorState, run_doctor_checks};
 pub use list::format_exclusion_list;
+pub use logs::cmd_logs;
 pub use rules::RuleMatcher;
 pub use scanner::{ScanDryRunEntry, ScanDryRunResult, ScanResult, Scanner};
 pub use tm_backend::{FakeTmBackend, RealTmBackend, TmBackend, TmBackendError};

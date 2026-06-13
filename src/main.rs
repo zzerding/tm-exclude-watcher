@@ -56,6 +56,7 @@ fn run() -> Result<()> {
         },
         Some("list") => cmd_list(),
         Some("clean") => cmd_clean(),
+        Some("logs") => cmd_logs_wrapper(&args[2..]),
         Some("watch") => {
             let path = args.get(2).context("用法: tm-watcher watch <path>")?;
             cmd_watch(path)
@@ -80,6 +81,8 @@ const HELP_TEXT: &str = "tm-watcher - macOS Time Machine 自动排除工具
                             预览将排除的目录，不调用 tmutil，不写数据库
   tm-watcher list           显示已记录的排除目录
   tm-watcher clean          清理失效记录并检查排除状态
+  tm-watcher logs [-n <行数>] [--follow]
+                            显示 daemon 日志
   tm-watcher watch <path>   实时监控路径并自动排除匹配目录
   tm-watcher start          启动守护进程（后台监控+定期清理）
   tm-watcher stop           停止守护进程
@@ -219,6 +222,10 @@ fn cmd_clean() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn cmd_logs_wrapper(args: &[String]) -> Result<()> {
+    tm_watcher::cmd_logs(&default_log_path()?, args)
 }
 
 fn cmd_watch(path: &str) -> Result<()> {
