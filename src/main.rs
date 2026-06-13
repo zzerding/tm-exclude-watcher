@@ -1,4 +1,5 @@
 // ABOUTME: CLI 入口 - tm-watcher scan/list/clean/watch/start/stop/status
+// 更正：公开 daemon 生命周期命令已迁移到 `tm-watcher daemon ...` 子命令。
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -45,16 +46,7 @@ fn run() -> Result<()> {
             print!("{HELP_TEXT}");
             Ok(())
         }
-        Some("scan") => match args.get(2).map(String::as_str) {
-            Some("--dry-run") => {
-                let path = args
-                    .get(3)
-                    .context("用法: tm-watcher scan --dry-run <path>")?;
-                cmd_scan_dry_run(path)
-            }
-            Some(path) => cmd_scan(path),
-            None => anyhow::bail!("用法: tm-watcher scan <path>"),
-        },
+        Some("scan") => cmd_scan_wrapper(&args[2..]),
         Some("list") => cmd_list(),
         Some("clean") => cmd_clean(),
         Some("logs") => cmd_logs_wrapper(&args[2..]),
@@ -63,11 +55,12 @@ fn run() -> Result<()> {
             let path = args.get(2).context("用法: tm-watcher watch <path>")?;
             cmd_watch(path)
         }
-        Some("start") => cmd_start_wrapper(),
-        Some("stop") => cmd_stop_wrapper(),
-        Some("status") => cmd_status_wrapper(),
+        Some("daemon") => cmd_daemon_command(&args[2..]),
+        Some("start") => bail_migrated_command("start", "daemon start"),
+        Some("stop") => bail_migrated_command("stop", "daemon stop"),
+        Some("status") => bail_migrated_command("status", "daemon status"),
         Some("doctor") => cmd_doctor_wrapper(),
-        Some("__daemon") => cmd_daemon_wrapper(),
+        Some("__daemon") => cmd_daemon_entrypoint(),
         _ => {
             eprint!("{HELP_TEXT}");
             std::process::exit(1);
@@ -78,21 +71,65 @@ fn run() -> Result<()> {
 const HELP_TEXT: &str = "tm-watcher - macOS Time Machine 自动排除工具
 
 用法:
+Daemon 生命周期:
+  tm-watcher daemon start   启动守护进程（后台监控+定期清理）
+  tm-watcher daemon stop    停止守护进程
+  tm-watcher daemon restart 重启守护进程
+  tm-watcher daemon status  显示守护进程状态
+
+扫描与清理:
   tm-watcher scan <path>    扫描指定路径并排除匹配的目录
+  tm-watcher scan <path> --dry-run
   tm-watcher scan --dry-run <path>
                             预览将排除的目录，不调用 tmutil，不写数据库
   tm-watcher list           显示已记录的排除目录
   tm-watcher clean          清理失效记录并检查排除状态
+
+诊断与日志:
   tm-watcher logs [-n <行数>] [--follow]
                             显示 daemon 日志
-  tm-watcher config --show | --add-path <路径> | --add-rule <规则>
-                            显示或更新配置
-  tm-watcher watch <path>   实时监控路径并自动排除匹配目录
-  tm-watcher start          启动守护进程（后台监控+定期清理）
-  tm-watcher stop           停止守护进程
-  tm-watcher status         显示守护进程状态
   tm-watcher doctor         运行系统健康检查
+
+配置管理:
+  tm-watcher config show    显示配置
+  tm-watcher config add-path <路径>
+                            添加监控路径
+  tm-watcher config add-rule <规则>
+                            添加排除规则
+
+前台调试:
+  tm-watcher watch <path>   实时监控路径并自动排除匹配目录
 ";
+
+const DAEMON_HELP_TEXT: &str = "tm-watcher daemon - 管理后台守护进程
+
+用法:
+  tm-watcher daemon start   启动守护进程（后台监控+定期清理）
+  tm-watcher daemon stop    停止守护进程
+  tm-watcher daemon restart 重启守护进程
+  tm-watcher daemon status  显示守护进程状态
+";
+
+const CONFIG_HELP_TEXT: &str = "tm-watcher config - 查看和更新配置
+
+用法:
+  tm-watcher config show             显示配置
+  tm-watcher config add-path <路径>  添加监控路径
+  tm-watcher config add-rule <规则>  添加排除规则
+";
+
+fn bail_migrated_command<T>(command: &str, suggestion: &str) -> Result<T> {
+    anyhow::bail!("未知命令 '{command}'，你是想用 '{suggestion}' 吗？")
+}
+
+fn cmd_scan_wrapper(args: &[String]) -> Result<()> {
+    match args {
+        [flag, path] if flag == "--dry-run" => cmd_scan_dry_run(path),
+        [path, flag] if flag == "--dry-run" => cmd_scan_dry_run(path),
+        [path] if path != "--dry-run" => cmd_scan(path),
+        _ => anyhow::bail!("用法: tm-watcher scan <path> [--dry-run]"),
+    }
+}
 
 fn cmd_scan(path: &str) -> Result<()> {
     let scan_path = PathBuf::from(expand_tilde(path));
@@ -233,6 +270,11 @@ fn cmd_logs_wrapper(args: &[String]) -> Result<()> {
 }
 
 fn cmd_config_wrapper(args: &[String]) -> Result<()> {
+    if matches!(args, [flag] if flag == "--help" || flag == "-h") {
+        print!("{CONFIG_HELP_TEXT}");
+        return Ok(());
+    }
+
     let config_path = default_config_path()?;
     let operation = parse_config_operation(args)?;
     let mut config = Config::load_or_create(&config_path)?;
@@ -262,12 +304,17 @@ enum ConfigOperation {
 
 fn parse_config_operation(args: &[String]) -> Result<ConfigOperation> {
     match args {
-        [flag] if flag == "--show" => Ok(ConfigOperation::Show),
-        [flag, value] if flag == "--add-path" => Ok(ConfigOperation::AddPath(value.clone())),
-        [flag, value] if flag == "--add-rule" => Ok(ConfigOperation::AddRule(value.clone())),
-        _ => {
-            anyhow::bail!("用法: tm-watcher config --show | --add-path <路径> | --add-rule <规则>")
+        [command] if command == "show" => Ok(ConfigOperation::Show),
+        [command, value] if command == "add-path" => Ok(ConfigOperation::AddPath(value.clone())),
+        [command, value] if command == "add-rule" => Ok(ConfigOperation::AddRule(value.clone())),
+        [flag] if flag == "--show" => bail_migrated_command("config --show", "config show"),
+        [flag, ..] if flag == "--add-path" => {
+            bail_migrated_command("config --add-path", "config add-path")
         }
+        [flag, ..] if flag == "--add-rule" => {
+            bail_migrated_command("config --add-rule", "config add-rule")
+        }
+        _ => anyhow::bail!("用法: tm-watcher config show | add-path <路径> | add-rule <规则>"),
     }
 }
 
@@ -369,6 +416,25 @@ fn cmd_status_wrapper() -> Result<()> {
     cmd_status(&config, &database)
 }
 
+fn cmd_daemon_command(args: &[String]) -> Result<()> {
+    match args {
+        [flag] if flag == "--help" || flag == "-h" => {
+            print!("{DAEMON_HELP_TEXT}");
+            Ok(())
+        }
+        [command] if command == "start" => cmd_start_wrapper(),
+        [command] if command == "stop" => cmd_stop_wrapper(),
+        [command] if command == "restart" => cmd_daemon_restart_wrapper(),
+        [command] if command == "status" => cmd_status_wrapper(),
+        _ => anyhow::bail!("用法: tm-watcher daemon <start|stop|restart|status>"),
+    }
+}
+
+fn cmd_daemon_restart_wrapper() -> Result<()> {
+    cmd_stop_wrapper()?;
+    cmd_start_wrapper()
+}
+
 fn cmd_doctor_wrapper() -> Result<()> {
     let config_path = default_config_path()?;
     let db_path = default_db_path()?;
@@ -388,7 +454,7 @@ fn cmd_doctor_wrapper() -> Result<()> {
     Ok(())
 }
 
-fn cmd_daemon_wrapper() -> Result<()> {
+fn cmd_daemon_entrypoint() -> Result<()> {
     use tm_watcher::run_periodic_cleanup;
     use tokio::sync::watch;
 

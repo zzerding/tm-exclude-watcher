@@ -22,9 +22,19 @@ fn test_context_documents_current_release_model() {
 fn test_context_documents_config_command() {
     let context = context_doc();
 
-    assert!(context.contains("tm-watcher config --show"));
-    assert!(context.contains("--add-path"));
-    assert!(context.contains("--add-rule"));
+    assert!(context.contains("tm-watcher config show"));
+    assert!(context.contains("config add-path"));
+    assert!(context.contains("config add-rule"));
+}
+
+#[test]
+fn test_context_documents_daemon_subcommands() {
+    let context = context_doc();
+
+    assert!(context.contains("tm-watcher daemon start"));
+    assert!(context.contains("tm-watcher daemon stop"));
+    assert!(context.contains("tm-watcher daemon status"));
+    assert!(context.contains("tm-watcher daemon restart"));
 }
 
 #[test]

@@ -25,7 +25,7 @@ brew tap zzerding/tap
 brew install tm-watcher
 ```
 
-Homebrew 安装后不会自动启动 daemon。需要后台监控时，显式运行 `tm-watcher start`；检查状态用 `tm-watcher status`；停止后台监控用 `tm-watcher stop`。
+Homebrew 安装后不会自动启动 daemon。需要后台监控时，显式运行 `tm-watcher daemon start`；检查状态用 `tm-watcher daemon status`；停止后台监控用 `tm-watcher daemon stop`。
 
 ### GitHub Release 二进制
 
@@ -122,25 +122,25 @@ tm-watcher clean
 
 ```bash
 # 启动
-tm-watcher start
+tm-watcher daemon start
 
 # 查看状态
-tm-watcher status
+tm-watcher daemon status
 
 # 停止
-tm-watcher stop
+tm-watcher daemon stop
 ```
 
 **特性:**
 - **登录自启:** 守护进程在用户登录时自动启动（macOS LaunchAgent）
 - **崩溃重启:** 异常退出时自动重启，正常退出（stop 命令）不会拉起
 - **日志路径:** `~/.local/share/tm-watcher/daemon.log`
-- **升级提示:** `tm-watcher status` 会检查 daemon 状态；如果 LaunchAgent 仍指向旧二进制路径，会提示运行 `tm-watcher stop && tm-watcher start`
+- **升级提示:** `tm-watcher daemon status` 会检查 daemon 状态；如果 LaunchAgent 仍指向旧二进制路径，会提示运行 `tm-watcher daemon stop && tm-watcher daemon start`
 
 **开发者注意:**
 - plist 指向 `current_exe()` 绝对路径，开发模式下是 `target/debug/tm-watcher`
-- `cargo clean` 后需重新执行 `tm-watcher start`
-- 手动替换二进制后可用 `tm-watcher status` 检查是否需要重启 daemon
+- `cargo clean` 后需重新执行 `tm-watcher daemon start`
+- 手动替换二进制后可用 `tm-watcher daemon status` 检查是否需要重启 daemon
 
 ### 查看 daemon 日志
 
@@ -165,16 +165,16 @@ tm-watcher logs --follow
 
 ```bash
 # 查看当前配置
-tm-watcher config --show
+tm-watcher config show
 
 # 添加监控路径
-tm-watcher config --add-path ~/Projects
+tm-watcher config add-path ~/Projects
 
 # 添加排除规则
-tm-watcher config --add-rule ".pytest_cache"
+tm-watcher config add-rule ".pytest_cache"
 ```
 
-配置变更后，运行 `tm-watcher stop && tm-watcher start` 重启 daemon 使其生效。
+配置变更后，运行 `tm-watcher daemon restart` 重启 daemon 使其生效。
 
 ## 工作原理
 

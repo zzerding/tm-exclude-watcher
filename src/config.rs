@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const CONFIG_RESTART_HINT: &str =
-    "配置已更新，请运行 'tm-watcher stop && tm-watcher start' 重启 daemon 使其生效";
+    "配置已更新，请运行 'tm-watcher daemon restart' 重启 daemon 使其生效";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfigUpdate {

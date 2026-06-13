@@ -86,9 +86,10 @@ PRD 最初提议根据目录大小决定是否排除。
 后台运行的监控服务，响应文件系统事件并执行排除/清理操作。
 
 **生命周期管理：macOS LaunchAgent**
-- `tm-watcher start`：预检 Time Machine、配置和数据库，生成 `~/Library/LaunchAgents/com.zzerding.tm-watcher.plist`，再调用 `launchctl bootstrap`
-- `tm-watcher stop`：调用 `launchctl bootout`，并删除 plist
-- `tm-watcher status`：调用 `launchctl print` 查询运行状态和 PID
+- `tm-watcher daemon start`：预检 Time Machine、配置和数据库，生成 `~/Library/LaunchAgents/com.zzerding.tm-watcher.plist`，再调用 `launchctl bootstrap`
+- `tm-watcher daemon stop`：调用 `launchctl bootout`，并删除 plist
+- `tm-watcher daemon status`：调用 `launchctl print` 查询运行状态和 PID
+- `tm-watcher daemon restart`：先停止再重新启动 LaunchAgent
 - `tm-watcher __daemon`：以前台进程运行 watcher 和定期清理，由 launchd 托管
 - LaunchAgent 配置 `RunAtLoad = true` 和 `KeepAlive.SuccessfulExit = false`，提供登录自启和异常重启
 
@@ -96,7 +97,7 @@ PRD 最初提议根据目录大小决定是否排除。
 - 不再 fork 后自行管理后台进程
 - 不再依赖 `~/.local/var/run/tm-watcher.pid` 判断运行状态
 - 不再手写 PID 复用防御和 SIGTERM 轮询停止
-- `start` 会静默清理旧版本遗留 PID 文件
+- `daemon start` 会静默清理旧版本遗留 PID 文件
 
 ### 扫描 (Scan)
 手动触发的全量扫描命令：`tm-watcher scan <path>`
@@ -149,7 +150,7 @@ PRD 最初提议根据目录大小决定是否排除。
 - 不支持项目级配置文件（未来可通过白名单机制实现定制需求）
 
 **零配置体验：**
-首次运行 `tm-watcher start` 时，如果配置文件不存在，自动生成默认配置：
+首次运行 `tm-watcher daemon start` 时，如果配置文件不存在，自动生成默认配置：
 ```toml
 watch_paths = ["~/Documents", "~/Projects", "~/Code", "~/Developer"]
 exclude_rules = [
@@ -164,9 +165,9 @@ interval_hours = 24
 
 **配置说明：**
 - 默认监控常见开发目录（路径不存在也不报错，静默跳过）
-- 用户通过 `tm-watcher config --show` 查看配置，通过 `--add-path` / `--add-rule` 添加监控路径和排除规则
-- 配置变更后需要运行 `tm-watcher stop && tm-watcher start` 重启 daemon 使其生效
-- 真正零配置：安装后直接 `tm-watcher start` 即可工作
+- 用户通过 `tm-watcher config show` 查看配置，通过 `config add-path` / `config add-rule` 添加监控路径和排除规则
+- 配置变更后需要运行 `tm-watcher daemon restart` 重启 daemon 使其生效
+- 真正零配置：安装后直接 `tm-watcher daemon start` 即可工作
 
 **配置内容：**
 - `watch_paths`：要监控的根目录列表
@@ -269,10 +270,10 @@ interval_hours = 24
 - **实时清理：** 检测到目录删除时立即清理排除记录
 - **定期清理：** 每 24 小时全量扫描，修正脏数据（兜底机制）
 - **CLI 命令：**
-  - `start` / `stop` - 通过 launchd 启动/停止守护进程
+  - `daemon start` / `daemon stop` - 通过 launchd 启动/停止守护进程
   - `scan <path>` - 手动扫描指定路径
   - `list` - 列出所有已排除目录
-  - `status` - 显示监控状态（监控路径、已排除数量、最后清理时间）
+  - `daemon status` - 显示监控状态（监控路径、已排除数量、最后清理时间）
   - `clean` - 手动触发清理
 - **数据存储：** SQLite 数据库，记录排除目录及元数据
 - **日志系统：** 写入 `~/.local/share/tm-watcher/daemon.log`
@@ -291,5 +292,5 @@ interval_hours = 24
 - `doctor` 命令：执行 Time Machine、配置文件、数据库、daemon 和 LaunchAgent plist 健康检查；任何失败或警告返回非 0。
 - `scan --dry-run`：预览匹配目录并显示匹配规则；不调用 `tmutil`，不写数据库。
 - `logs` 命令：查看 daemon 日志尾部，支持 `-n <行数>` 和 `--follow`。
-- `status` 命令：显示数据库已知大小合计的累计节省空间；没有已知大小时提示运行 `tm-watcher clean` 更新大小信息。
-- `config` 命令：支持 `--show`、`--add-path <路径>`、`--add-rule <规则>`；更新配置后提示重启 daemon。
+- `daemon status` 命令：显示数据库已知大小合计的累计节省空间；没有已知大小时提示运行 `tm-watcher clean` 更新大小信息。
+- `config` 命令：支持 `show`、`add-path <路径>`、`add-rule <规则>`；更新配置后提示重启 daemon。

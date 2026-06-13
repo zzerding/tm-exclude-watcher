@@ -44,13 +44,13 @@ class TmWatcher < Formula
       tm-watcher is installed but not started automatically.
 
       To enable background monitoring:
-        tm-watcher start
+        tm-watcher daemon start
 
       To check daemon status:
-        tm-watcher status
+        tm-watcher daemon status
 
       To stop background monitoring:
-        tm-watcher stop
+        tm-watcher daemon stop
     EOS
   end
 end

@@ -147,7 +147,7 @@ test do
 end
 ```
 
-formula 不定义 `service do`。Homebrew 只负责安装二进制，daemon 生命周期由 `tm-watcher start` / `tm-watcher stop` / `tm-watcher status` 管理。
+formula 不定义 `service do`。Homebrew 只负责安装二进制，daemon 生命周期由 `tm-watcher daemon start` / `tm-watcher daemon stop` / `tm-watcher daemon status` 管理。
 
 formula caveats：
 
@@ -155,13 +155,13 @@ formula caveats：
 tm-watcher is installed but not started automatically.
 
 To enable background monitoring:
-  tm-watcher start
+  tm-watcher daemon start
 
 To check daemon status:
-  tm-watcher status
+  tm-watcher daemon status
 
 To stop background monitoring:
-  tm-watcher stop
+  tm-watcher daemon stop
 ```
 
 tap 自动更新提交信息：
@@ -184,7 +184,7 @@ v0.2.0 发布准备必须包含：
 - `Cargo.toml` 发布元数据
 - `cargo-dist` release workflow
 - stable 发布自动更新 Homebrew tap
-- `status` 识别 LaunchAgent plist 指向旧二进制路径，并提示 `tm-watcher stop && tm-watcher start`
+- `daemon status` 识别 LaunchAgent plist 指向旧二进制路径，并提示 `tm-watcher daemon stop && tm-watcher daemon start`
 - 本文档
 
 v0.2.0 不加入：
@@ -233,9 +233,9 @@ Optional：
 ```bash
 tm-watcher --version
 tm-watcher --help
-tm-watcher start
-tm-watcher status
-tm-watcher stop
+tm-watcher daemon start
+tm-watcher daemon status
+tm-watcher daemon stop
 ```
 
 ### 手动扫描和 tmutil 真值验证
@@ -275,34 +275,34 @@ tmutil isexcluded /tmp/tm-watcher-e2e/project/node_modules
 启动并确认 launchd job：
 
 ```bash
-tm-watcher start
+tm-watcher daemon start
 launchctl print gui/$(id -u)/com.zzerding.tm-watcher
-tm-watcher status
-tm-watcher stop
+tm-watcher daemon status
+tm-watcher daemon stop
 ```
 
-登录自启不作为 v0.2.0 stable 硬门槛；可选人工验证退出登录后再次执行 `tm-watcher status`。
+登录自启不作为 v0.2.0 stable 硬门槛；可选人工验证退出登录后再次执行 `tm-watcher daemon status`。
 
 ### 异常退出重启
 
 ```bash
-tm-watcher start
-tm-watcher status
+tm-watcher daemon start
+tm-watcher daemon status
 kill -9 <PID>
 sleep 3
-tm-watcher status
-tm-watcher stop
+tm-watcher daemon status
+tm-watcher daemon stop
 ```
 
-期望 `status` 显示新的 PID 或 daemon 仍在运行。
+期望 `daemon status` 显示新的 PID 或 daemon 仍在运行。
 
 ### 正常停止不重启
 
 ```bash
-tm-watcher start
-tm-watcher stop
+tm-watcher daemon start
+tm-watcher daemon stop
 sleep 3
-tm-watcher status
+tm-watcher daemon status
 ```
 
 期望 daemon 不在运行，plist 已删除或 launchd job 已卸载。
@@ -310,10 +310,10 @@ tm-watcher status
 ### daemon 日志
 
 ```bash
-tm-watcher start
+tm-watcher daemon start
 ls -l ~/.local/share/tm-watcher/daemon.log
 tail -n 50 ~/.local/share/tm-watcher/daemon.log
-tm-watcher stop
+tm-watcher daemon stop
 ```
 
 日志中至少应出现：
@@ -330,7 +330,7 @@ tm-watcher stop
 
 ```bash
 rm -rf /tmp/tm-watcher-home
-HOME=/tmp/tm-watcher-home tm-watcher status
+HOME=/tmp/tm-watcher-home tm-watcher daemon status
 cat /tmp/tm-watcher-home/.config/tm-watcher/config.toml
 ```
 
@@ -352,15 +352,15 @@ brew tap zzerding/tap
 brew install tm-watcher
 tm-watcher --version
 tm-watcher --help
-tm-watcher start
-tm-watcher status
-tm-watcher stop
+tm-watcher daemon start
+tm-watcher daemon status
+tm-watcher daemon stop
 ```
 
-upgrade 场景需验证 `status` 能识别 LaunchAgent plist 指向旧二进制路径，并提示：
+upgrade 场景需验证 `daemon status` 能识别 LaunchAgent plist 指向旧二进制路径，并提示：
 
 ```bash
-tm-watcher stop && tm-watcher start
+tm-watcher daemon stop && tm-watcher daemon start
 ```
 
 Homebrew 不自动启动 daemon，不自动重启 daemon。
@@ -368,7 +368,7 @@ Homebrew 不自动启动 daemon，不自动重启 daemon。
 ### 清理测试残留
 
 ```bash
-tm-watcher stop || true
+tm-watcher daemon stop || true
 rm -rf /tmp/tm-watcher-e2e
 rm -rf /tmp/tm-watcher-home
 tm-watcher clean

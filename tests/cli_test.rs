@@ -20,6 +20,17 @@ fn assert_no_user_state_created(home: &TempDir) {
     assert!(!home.path().join(".local/share/tm-watcher").exists());
 }
 
+fn assert_migration_error_without_state(args: &[&str], suggestion: &str) {
+    let home = TempDir::new().unwrap();
+    let output = run_tm_watcher(args, &home);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("未知命令"));
+    assert!(stderr.contains(suggestion));
+    assert_no_user_state_created(&home);
+}
+
 fn write_launch_agent_plist(home: &TempDir, exe_path: &Path) {
     let plist_dir = home.path().join("Library/LaunchAgents");
     fs::create_dir_all(&plist_dir).unwrap();
@@ -125,15 +136,23 @@ fn test_help_covers_public_commands_without_user_state() {
         for expected in [
             "tm-watcher - macOS Time Machine 自动排除工具",
             "用法:",
+            "Daemon 生命周期:",
+            "扫描与清理:",
+            "诊断与日志:",
+            "配置管理:",
+            "前台调试:",
             "scan <path>",
             "list",
             "clean",
             "logs",
-            "config",
+            "config show",
+            "config add-path",
+            "config add-rule",
             "watch <path>",
-            "start",
-            "stop",
-            "status",
+            "daemon start",
+            "daemon stop",
+            "daemon restart",
+            "daemon status",
             "doctor",
         ] {
             assert!(stdout.contains(expected), "missing help text: {expected}");
@@ -144,14 +163,66 @@ fn test_help_covers_public_commands_without_user_state() {
 }
 
 #[test]
+fn test_daemon_help_covers_lifecycle_subcommands_without_user_state() {
+    let home = TempDir::new().unwrap();
+    let output = run_tm_watcher(&["daemon", "--help"], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for expected in [
+        "tm-watcher daemon",
+        "daemon start",
+        "daemon stop",
+        "daemon restart",
+        "daemon status",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing daemon help text: {expected}"
+        );
+    }
+    assert!(output.stderr.is_empty());
+    assert_no_user_state_created(&home);
+}
+
+#[test]
+fn test_config_help_covers_config_subcommands_without_user_state() {
+    let home = TempDir::new().unwrap();
+    let output = run_tm_watcher(&["config", "--help"], &home);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    for expected in [
+        "tm-watcher config",
+        "config show",
+        "config add-path <路径>",
+        "config add-rule <规则>",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing config help text: {expected}"
+        );
+    }
+    assert!(output.stderr.is_empty());
+    assert_no_user_state_created(&home);
+}
+
+#[test]
+fn test_old_daemon_commands_report_migration_without_user_state() {
+    assert_migration_error_without_state(&["start"], "daemon start");
+    assert_migration_error_without_state(&["stop"], "daemon stop");
+    assert_migration_error_without_state(&["status"], "daemon status");
+}
+
+#[test]
 fn test_status_without_launch_agent_plist_has_no_binary_warning() {
     let home = TempDir::new().unwrap();
-    let output = run_tm_watcher(&["status"], &home);
+    let output = run_tm_watcher(&["daemon", "status"], &home);
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(!stdout.contains("LaunchAgent 仍指向旧的 tm-watcher 二进制路径"));
-    assert!(!stdout.contains("tm-watcher stop && tm-watcher start"));
+    assert!(!stdout.contains("tm-watcher daemon stop && tm-watcher daemon start"));
 }
 
 #[test]
@@ -159,12 +230,12 @@ fn test_status_with_current_launch_agent_path_has_no_binary_warning() {
     let home = TempDir::new().unwrap();
     write_launch_agent_plist(&home, Path::new(env!("CARGO_BIN_EXE_tm-watcher")));
 
-    let output = run_tm_watcher(&["status"], &home);
+    let output = run_tm_watcher(&["daemon", "status"], &home);
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(!stdout.contains("LaunchAgent 仍指向旧的 tm-watcher 二进制路径"));
-    assert!(!stdout.contains("tm-watcher stop && tm-watcher start"));
+    assert!(!stdout.contains("tm-watcher daemon stop && tm-watcher daemon start"));
 }
 
 #[test]
@@ -173,14 +244,14 @@ fn test_status_warns_when_launch_agent_points_to_old_binary() {
     let old_path = Path::new("/opt/homebrew/Cellar/tm-watcher/0.1.0/bin/tm-watcher");
     write_launch_agent_plist(&home, old_path);
 
-    let output = run_tm_watcher(&["status"], &home);
+    let output = run_tm_watcher(&["daemon", "status"], &home);
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("警告: LaunchAgent 仍指向旧的 tm-watcher 二进制路径"));
     assert!(stdout.contains("/opt/homebrew/Cellar/tm-watcher/0.1.0/bin/tm-watcher"));
     assert!(stdout.contains(env!("CARGO_BIN_EXE_tm-watcher")));
-    assert!(stdout.contains("tm-watcher stop && tm-watcher start"));
+    assert!(stdout.contains("tm-watcher daemon stop && tm-watcher daemon start"));
 }
 
 #[test]
@@ -194,7 +265,7 @@ fn test_status_reports_saved_space_regardless_of_daemon_state() {
     );
     write_exclusion_record_with_size(&home, &home.path().join("project/target"), "target", None);
 
-    let output = run_tm_watcher(&["status"], &home);
+    let output = run_tm_watcher(&["daemon", "status"], &home);
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -206,7 +277,7 @@ fn test_status_reports_saved_space_regardless_of_daemon_state() {
 fn test_config_show_prints_full_friendly_config() {
     let home = TempDir::new().unwrap();
 
-    let output = run_tm_watcher(&["config", "--show"], &home);
+    let output = run_tm_watcher(&["config", "show"], &home);
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -225,16 +296,12 @@ fn test_config_show_prints_full_friendly_config() {
 fn test_config_add_rule_updates_config_and_prints_restart_hint() {
     let home = TempDir::new().unwrap();
 
-    let output = run_tm_watcher(&["config", "--add-rule", ".pytest_cache"], &home);
+    let output = run_tm_watcher(&["config", "add-rule", ".pytest_cache"], &home);
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("已添加排除规则: .pytest_cache"));
-    assert!(
-        stdout.contains(
-            "配置已更新，请运行 'tm-watcher stop && tm-watcher start' 重启 daemon 使其生效"
-        )
-    );
+    assert!(stdout.contains("配置已更新，请运行 'tm-watcher daemon restart' 重启 daemon 使其生效"));
     let config = std::fs::read_to_string(config_path(&home)).unwrap();
     assert!(config.contains("\".pytest_cache\""));
 }
@@ -242,10 +309,10 @@ fn test_config_add_rule_updates_config_and_prints_restart_hint() {
 #[test]
 fn test_config_add_rule_skips_duplicate() {
     let home = TempDir::new().unwrap();
-    let first = run_tm_watcher(&["config", "--add-rule", ".pytest_cache"], &home);
+    let first = run_tm_watcher(&["config", "add-rule", ".pytest_cache"], &home);
     assert!(first.status.success());
 
-    let output = run_tm_watcher(&["config", "--add-rule", ".pytest_cache"], &home);
+    let output = run_tm_watcher(&["config", "add-rule", ".pytest_cache"], &home);
 
     assert!(output.status.success());
     assert_eq!(
@@ -258,7 +325,7 @@ fn test_config_add_rule_skips_duplicate() {
 fn test_config_add_path_expands_tilde_and_updates_config() {
     let home = TempDir::new().unwrap();
 
-    let output = run_tm_watcher(&["config", "--add-path", "~/Workspace"], &home);
+    let output = run_tm_watcher(&["config", "add-path", "~/Workspace"], &home);
 
     assert!(output.status.success());
     let expanded = home.path().join("Workspace").to_string_lossy().into_owned();
@@ -271,10 +338,10 @@ fn test_config_add_path_expands_tilde_and_updates_config() {
 #[test]
 fn test_config_add_path_skips_child_covered_by_existing_parent() {
     let home = TempDir::new().unwrap();
-    let first = run_tm_watcher(&["config", "--add-path", "~/Workspace"], &home);
+    let first = run_tm_watcher(&["config", "add-path", "~/Workspace"], &home);
     assert!(first.status.success());
 
-    let output = run_tm_watcher(&["config", "--add-path", "~/Workspace/project"], &home);
+    let output = run_tm_watcher(&["config", "add-path", "~/Workspace/project"], &home);
 
     assert!(output.status.success());
     let expanded_parent = home.path().join("Workspace").to_string_lossy().into_owned();
@@ -287,10 +354,10 @@ fn test_config_add_path_skips_child_covered_by_existing_parent() {
 #[test]
 fn test_config_add_path_skips_parent_covering_existing_children() {
     let home = TempDir::new().unwrap();
-    let first = run_tm_watcher(&["config", "--add-path", "~/Workspace/project"], &home);
+    let first = run_tm_watcher(&["config", "add-path", "~/Workspace/project"], &home);
     assert!(first.status.success());
 
-    let output = run_tm_watcher(&["config", "--add-path", "~/Workspace"], &home);
+    let output = run_tm_watcher(&["config", "add-path", "~/Workspace"], &home);
 
     assert!(output.status.success());
     let expanded_child = home
@@ -308,7 +375,7 @@ fn test_config_add_path_skips_parent_covering_existing_children() {
 fn test_config_rejects_multiple_operations() {
     let home = TempDir::new().unwrap();
 
-    let output = run_tm_watcher(&["config", "--show", "--add-rule", ".cache"], &home);
+    let output = run_tm_watcher(&["config", "show", "add-rule", ".cache"], &home);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -322,12 +389,25 @@ fn test_config_malformed_file_reports_clear_error() {
     fs::create_dir_all(config_path(&home).parent().unwrap()).unwrap();
     fs::write(config_path(&home), "watch_paths = [").unwrap();
 
-    let output = run_tm_watcher(&["config", "--show"], &home);
+    let output = run_tm_watcher(&["config", "show"], &home);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("配置文件格式错误"));
     assert!(stderr.contains("config.toml"));
+}
+
+#[test]
+fn test_old_config_flags_report_migration_without_user_state() {
+    assert_migration_error_without_state(&["config", "--show"], "config show");
+    assert_migration_error_without_state(
+        &["config", "--add-path", "~/Workspace"],
+        "config add-path",
+    );
+    assert_migration_error_without_state(
+        &["config", "--add-rule", ".pytest_cache"],
+        "config add-rule",
+    );
 }
 
 #[test]
