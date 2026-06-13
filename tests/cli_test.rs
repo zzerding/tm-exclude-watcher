@@ -77,6 +77,7 @@ fn test_help_covers_public_commands_without_user_state() {
             "start",
             "stop",
             "status",
+            "doctor",
         ] {
             assert!(stdout.contains(expected), "missing help text: {expected}");
         }
@@ -123,4 +124,28 @@ fn test_status_warns_when_launch_agent_points_to_old_binary() {
     assert!(stdout.contains("/opt/homebrew/Cellar/tm-watcher/0.1.0/bin/tm-watcher"));
     assert!(stdout.contains(env!("CARGO_BIN_EXE_tm-watcher")));
     assert!(stdout.contains("tm-watcher stop && tm-watcher start"));
+}
+
+#[test]
+fn test_doctor_reports_all_checks_and_exits_nonzero_on_warnings() {
+    let home = TempDir::new().unwrap();
+    let output = run_tm_watcher(&["doctor"], &home);
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("tm-watcher 健康检查"));
+    for expected in [
+        "Time Machine",
+        "配置文件",
+        "数据库",
+        "Daemon",
+        "LaunchAgent plist",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing doctor check: {expected}"
+        );
+    }
 }

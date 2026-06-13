@@ -3,8 +3,9 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tm_watcher::{
-    Cleaner, Config, Database, RealTmBackend, Scanner, Watcher, check_tm_configured, cmd_start,
-    cmd_status, cmd_stop, format_exclusion_list, logging,
+    Cleaner, Config, Database, LaunchAgentDoctorState, RealTmBackend, Scanner, Watcher,
+    check_tm_configured, cmd_start, cmd_status, cmd_stop, format_exclusion_list, logging,
+    run_doctor_checks,
 };
 
 fn main() {
@@ -56,6 +57,7 @@ fn run() -> Result<()> {
         Some("start") => cmd_start_wrapper(),
         Some("stop") => cmd_stop_wrapper(),
         Some("status") => cmd_status_wrapper(),
+        Some("doctor") => cmd_doctor_wrapper(),
         Some("__daemon") => cmd_daemon_wrapper(),
         _ => {
             eprint!("{HELP_TEXT}");
@@ -74,6 +76,7 @@ const HELP_TEXT: &str = "tm-watcher - macOS Time Machine 自动排除工具
   tm-watcher start          启动守护进程（后台监控+定期清理）
   tm-watcher stop           停止守护进程
   tm-watcher status         显示守护进程状态
+  tm-watcher doctor         运行系统健康检查
 ";
 
 fn cmd_scan(path: &str) -> Result<()> {
@@ -200,6 +203,25 @@ fn cmd_status_wrapper() -> Result<()> {
     let database = open_default_database()?;
 
     cmd_status(&config, &database)
+}
+
+fn cmd_doctor_wrapper() -> Result<()> {
+    let config_path = default_config_path()?;
+    let db_path = default_db_path()?;
+    let tm_backend = RealTmBackend::new();
+    let report = run_doctor_checks(
+        &config_path,
+        &db_path,
+        &tm_backend,
+        LaunchAgentDoctorState::current(),
+    );
+
+    print!("{}", report.render());
+    if report.has_issues() {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 fn cmd_daemon_wrapper() -> Result<()> {

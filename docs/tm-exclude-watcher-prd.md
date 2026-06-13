@@ -145,7 +145,7 @@ tm-watcher status
 # 显示：监控路径、已排除目录数量、最后清理时间
 ```
 
-#### v0.3.0 - 计划中
+#### v0.3.0 - 开发中
 
 **配置管理**
 ```bash
@@ -289,7 +289,7 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [ ] `scan --dry-run` 预览模式（只列出将排除的目录，不执行）
 - [ ] `status` 显示累计节省的备份空间
 - [ ] `logs` 命令（查看 daemon 日志，支持 `-n` 行数和 `--follow` 实时追踪）
-- [ ] `doctor` 命令（自检 Time Machine 配置、配置文件、数据库、daemon 状态、LaunchAgent）
+- [x] `doctor` 命令（自检 Time Machine 配置、配置文件、数据库、daemon 状态、LaunchAgent）
 
 ### v0.4.0 - 高级配置（需求驱动，等用户反馈）
 - [ ] 自定义规则支持（glob 模式）
