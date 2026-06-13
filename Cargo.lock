@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "tm-watcher"
-version = "0.2.0-rc.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs",
