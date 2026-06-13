@@ -287,7 +287,7 @@ CREATE INDEX idx_last_checked ON excluded_directories(last_checked_at);
 - [ ] `config` 子命令（`--add-path` / `--add-rule` / `--show`，含"配置变更后 daemon 需重启"提示）
 - [ ] 白名单机制（名字匹配规则但不排除的目录，防误伤）
 - [x] `scan --dry-run` 预览模式（只列出将排除的目录，不执行）
-- [ ] `status` 显示累计节省的备份空间
+- [x] `status` 显示累计节省的备份空间
 - [x] `logs` 命令（查看 daemon 日志，支持 `-n` 行数和 `--follow` 实时追踪）
 - [x] `doctor` 命令（自检 Time Machine 配置、配置文件、数据库、daemon 状态、LaunchAgent）
 

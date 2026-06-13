@@ -19,7 +19,7 @@ pub use config::Config;
 pub use daemon::{check_tm_configured, cmd_start, cmd_status, cmd_stop, run_periodic_cleanup};
 pub use database::{Database, ExclusionRecord};
 pub use doctor::{LaunchAgentDoctorState, run_doctor_checks};
-pub use list::format_exclusion_list;
+pub use list::{format_exclusion_list, format_saved_space_summary};
 pub use logs::cmd_logs;
 pub use rules::RuleMatcher;
 pub use scanner::{ScanDryRunEntry, ScanDryRunResult, ScanResult, Scanner};
