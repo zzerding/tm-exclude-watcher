@@ -212,10 +212,14 @@ mod precheck_tests {
 
 /// cmd_start: 启动守护进程(launchd 模式)
 pub fn cmd_start(config_path: &Path, db_path: &Path, log_path: &Path) -> Result<()> {
-    use crate::launchd;
-
     // 预检：TM 配置、配置文件验证和数据库可访问性
     precheck_daemon_start(config_path, db_path)?;
+
+    cmd_start_prechecked(log_path)
+}
+
+fn cmd_start_prechecked(log_path: &Path) -> Result<()> {
+    use crate::launchd;
 
     // 静默清理旧版本 PID 文件(Issue #4 遗留)
     if let Some(home) = dirs::home_dir() {
@@ -257,6 +261,24 @@ pub fn cmd_start(config_path: &Path, db_path: &Path, log_path: &Path) -> Result<
     println!("  登录自启: 启用");
     println!("  崩溃重启: 启用");
 
+    Ok(())
+}
+
+/// cmd_restart: 预检配置后受控重启守护进程(launchd 模式)
+pub fn cmd_restart(config_path: &Path, db_path: &Path, log_path: &Path) -> Result<()> {
+    use crate::launchd;
+
+    if launchd::query_status().is_none() {
+        anyhow::bail!("守护进程未运行，请先使用 'tm-watcher daemon start' 启动");
+    }
+
+    precheck_daemon_start(config_path, db_path).context("配置预检失败，请修复配置文件后重试")?;
+
+    cmd_stop().context("重启失败：停止守护进程失败")?;
+    cmd_start_prechecked(log_path)
+        .context("重启失败：启动守护进程失败，请手动运行 'tm-watcher daemon start'")?;
+
+    println!("✓ 守护进程已重启，配置已生效");
     Ok(())
 }
 
