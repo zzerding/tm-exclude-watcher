@@ -20,6 +20,6 @@ pub use database::{Database, ExclusionRecord};
 pub use doctor::{LaunchAgentDoctorState, run_doctor_checks};
 pub use list::format_exclusion_list;
 pub use rules::RuleMatcher;
-pub use scanner::{ScanResult, Scanner};
+pub use scanner::{ScanDryRunEntry, ScanDryRunResult, ScanResult, Scanner};
 pub use tm_backend::{FakeTmBackend, RealTmBackend, TmBackend, TmBackendError};
 pub use watcher::Watcher;

@@ -3,9 +3,9 @@
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use tm_watcher::{
-    Cleaner, Config, Database, LaunchAgentDoctorState, RealTmBackend, Scanner, Watcher,
-    check_tm_configured, cmd_start, cmd_status, cmd_stop, format_exclusion_list, logging,
-    run_doctor_checks,
+    Cleaner, Config, Database, LaunchAgentDoctorState, RealTmBackend, ScanDryRunEntry,
+    ScanDryRunResult, Scanner, Watcher, check_tm_configured, cmd_start, cmd_status, cmd_stop,
+    format_exclusion_list, logging, run_doctor_checks,
 };
 
 fn main() {
@@ -44,10 +44,16 @@ fn run() -> Result<()> {
             print!("{HELP_TEXT}");
             Ok(())
         }
-        Some("scan") => {
-            let path = args.get(2).context("用法: tm-watcher scan <path>")?;
-            cmd_scan(path)
-        }
+        Some("scan") => match args.get(2).map(String::as_str) {
+            Some("--dry-run") => {
+                let path = args
+                    .get(3)
+                    .context("用法: tm-watcher scan --dry-run <path>")?;
+                cmd_scan_dry_run(path)
+            }
+            Some(path) => cmd_scan(path),
+            None => anyhow::bail!("用法: tm-watcher scan <path>"),
+        },
         Some("list") => cmd_list(),
         Some("clean") => cmd_clean(),
         Some("watch") => {
@@ -70,6 +76,8 @@ const HELP_TEXT: &str = "tm-watcher - macOS Time Machine 自动排除工具
 
 用法:
   tm-watcher scan <path>    扫描指定路径并排除匹配的目录
+  tm-watcher scan --dry-run <path>
+                            预览将排除的目录，不调用 tmutil，不写数据库
   tm-watcher list           显示已记录的排除目录
   tm-watcher clean          清理失效记录并检查排除状态
   tm-watcher watch <path>   实时监控路径并自动排除匹配目录
@@ -111,6 +119,81 @@ fn cmd_scan(path: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn cmd_scan_dry_run(path: &str) -> Result<()> {
+    let scan_path = PathBuf::from(expand_tilde(path));
+    if !scan_path.exists() {
+        anyhow::bail!("路径不存在: {}", scan_path.display());
+    }
+
+    let config_path = default_config_path()?;
+    let config = load_config_for_dry_run(&config_path)?;
+
+    let db_path = default_db_path()?;
+    let database = Database::open_read_only_if_exists(&db_path)?;
+
+    let result = Scanner::dry_run(config, database.as_ref(), &scan_path)?;
+    print!("{}", format_scan_dry_run(path, &scan_path, &result));
+
+    Ok(())
+}
+
+fn load_config_for_dry_run(config_path: &std::path::Path) -> Result<Config> {
+    if config_path.exists() {
+        return Config::load_or_create(config_path);
+    }
+
+    Ok(Config::default_config())
+}
+
+fn format_scan_dry_run(
+    input_path: &str,
+    scan_path: &std::path::Path,
+    result: &ScanDryRunResult,
+) -> String {
+    let mut output = format!("扫描预览: {}\n\n", format_display_path(scan_path));
+    output.push_str(&format!(
+        "将要排除的目录（{} 个）:\n",
+        result.to_exclude.len()
+    ));
+    append_dry_run_entries(&mut output, &result.to_exclude);
+
+    output.push('\n');
+    output.push_str(&format!(
+        "已跳过（之前已排除）: {} 个\n",
+        result.skipped.len()
+    ));
+    append_dry_run_entries(&mut output, &result.skipped);
+
+    if !result.errors.is_empty() {
+        output.push('\n');
+        output.push_str(&format!("错误: {} 个\n", result.errors.len()));
+        for err in &result.errors {
+            output.push_str(&format!("  - {err}\n"));
+        }
+    }
+
+    output.push('\n');
+    output.push_str(&format!(
+        "提示: 使用 'tm-watcher scan {input_path}' 执行实际排除\n"
+    ));
+    output
+}
+
+fn append_dry_run_entries(output: &mut String, entries: &[ScanDryRunEntry]) {
+    if entries.is_empty() {
+        output.push_str("  无\n");
+        return;
+    }
+
+    for entry in entries {
+        output.push_str(&format!(
+            "  {}  (匹配规则: {})\n",
+            format_display_path(&entry.path),
+            entry.rule
+        ));
+    }
 }
 
 fn cmd_list() -> Result<()> {
@@ -183,6 +266,21 @@ fn expand_tilde(path: &str) -> String {
         return home.join(rest).to_string_lossy().into_owned();
     }
     path.to_string()
+}
+
+fn format_display_path(path: &std::path::Path) -> String {
+    let Some(home) = dirs::home_dir() else {
+        return path.display().to_string();
+    };
+
+    if path == home {
+        return "~".to_string();
+    }
+
+    match path.strip_prefix(&home) {
+        Ok(relative) => format!("~/{}", relative.display()),
+        Err(_) => path.display().to_string(),
+    }
 }
 
 fn cmd_start_wrapper() -> Result<()> {
