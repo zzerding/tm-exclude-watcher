@@ -7,12 +7,14 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tempfile::TempDir;
 
+fn tm_watcher_command(args: &[&str], home: &TempDir) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tm-watcher"));
+    command.args(args).env("HOME", home.path());
+    command
+}
+
 fn run_tm_watcher(args: &[&str], home: &TempDir) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_tm-watcher"))
-        .args(args)
-        .env("HOME", home.path())
-        .output()
-        .unwrap()
+    tm_watcher_command(args, home).output().unwrap()
 }
 
 fn assert_no_user_state_created(home: &TempDir) {
@@ -94,9 +96,7 @@ fn config_path(home: &TempDir) -> std::path::PathBuf {
 }
 
 fn spawn_tm_watcher(args: &[&str], home: &TempDir) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_tm-watcher"))
-        .args(args)
-        .env("HOME", home.path())
+    tm_watcher_command(args, home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -107,6 +107,138 @@ fn collect_follow_output(mut child: Child) -> Output {
     std::thread::sleep(Duration::from_millis(500));
     let _ = child.kill();
     child.wait_with_output().unwrap()
+}
+
+fn write_executable(path: &Path, content: &str) {
+    fs::write(path, content).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+}
+
+fn fake_daemon_tool_path(bin_dir: &Path) -> String {
+    match std::env::var("PATH") {
+        Ok(path) => format!("{}:{path}", bin_dir.display()),
+        Err(_) => bin_dir.display().to_string(),
+    }
+}
+
+fn write_fake_daemon_tools(bin_dir: &Path) {
+    write_executable(
+        &bin_dir.join("launchctl"),
+        r#"#!/bin/sh
+echo "launchctl $*" >> "$FAKE_COMMAND_LOG"
+
+case "$1" in
+  print)
+    if [ "$(cat "$FAKE_LAUNCHD_STATE" 2>/dev/null)" = "running" ]; then
+      cat <<'EOF'
+com.zzerding.tm-watcher = {
+    pid = 4242
+}
+EOF
+      exit 0
+    fi
+    echo "service not found" >&2
+    exit 3
+    ;;
+  bootout)
+    if [ "$FAKE_LAUNCHD_BOOTOUT_FAIL" = "1" ]; then
+      echo "bootout failed" >&2
+      exit 64
+    fi
+    echo stopped > "$FAKE_LAUNCHD_STATE"
+    exit 0
+    ;;
+  bootstrap)
+    if [ "$FAKE_LAUNCHD_BOOTSTRAP_FAIL" = "1" ]; then
+      echo "bootstrap failed" >&2
+      exit 65
+    fi
+    echo running > "$FAKE_LAUNCHD_STATE"
+    exit 0
+    ;;
+esac
+
+echo "unexpected launchctl command: $*" >&2
+exit 2
+"#,
+    );
+
+    write_executable(
+        &bin_dir.join("tmutil"),
+        r#"#!/bin/sh
+echo "tmutil $*" >> "$FAKE_COMMAND_LOG"
+
+case "$1" in
+  destinationinfo)
+    if [ "${FAKE_TMUTIL_CONFIGURED:-1}" = "1" ]; then
+      echo "Name: Test Backup"
+      exit 0
+    fi
+    echo "No destinations configured" >&2
+    exit 1
+    ;;
+esac
+
+exit 0
+"#,
+    );
+}
+
+fn run_restart_with_fake_tools(
+    home: &TempDir,
+    initial_state: &str,
+    extra_env: &[(&str, &str)],
+) -> (Output, String, String) {
+    let bin_dir = TempDir::new().unwrap();
+    write_fake_daemon_tools(bin_dir.path());
+
+    let state_path = bin_dir.path().join("launchd.state");
+    let command_log = bin_dir.path().join("commands.log");
+    fs::write(&state_path, initial_state).unwrap();
+
+    let mut command = tm_watcher_command(&["daemon", "restart"], home);
+    command
+        .env("PATH", fake_daemon_tool_path(bin_dir.path()))
+        .env("FAKE_LAUNCHD_STATE", &state_path)
+        .env("FAKE_COMMAND_LOG", &command_log);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+
+    let output = command.output().unwrap();
+    let log = fs::read_to_string(command_log).unwrap_or_default();
+    let state = fs::read_to_string(state_path).unwrap_or_default();
+
+    (output, log, state)
+}
+
+fn write_malformed_config(home: &TempDir) {
+    let path = config_path(home);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, "watch_paths = [").unwrap();
+}
+
+fn write_default_config(home: &TempDir) {
+    let path = config_path(home);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        r#"watch_paths = ["~/Projects"]
+exclude_rules = ["node_modules"]
+interval_hours = 24
+cleanup_on_delete = true
+confirmation_delay_seconds = 5
+"#,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -212,6 +344,88 @@ fn test_old_daemon_commands_report_migration_without_user_state() {
     assert_migration_error_without_state(&["start"], "daemon start");
     assert_migration_error_without_state(&["stop"], "daemon stop");
     assert_migration_error_without_state(&["status"], "daemon status");
+}
+
+#[test]
+fn test_daemon_restart_refuses_when_daemon_is_not_running() {
+    let home = TempDir::new().unwrap();
+
+    let (output, command_log, _state) = run_restart_with_fake_tools(&home, "stopped", &[]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("守护进程未运行，请先使用 'tm-watcher daemon start' 启动"));
+    assert!(command_log.contains("launchctl print"));
+    assert!(!command_log.contains("launchctl bootout"));
+    assert!(!command_log.contains("launchctl bootstrap"));
+}
+
+#[test]
+fn test_daemon_restart_prechecks_config_before_stopping() {
+    let home = TempDir::new().unwrap();
+    write_malformed_config(&home);
+
+    let (output, command_log, state) = run_restart_with_fake_tools(&home, "running", &[]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("配置预检失败，请修复配置文件后重试"));
+    assert!(stderr.contains("config.toml"));
+    assert!(command_log.contains("tmutil destinationinfo"));
+    assert!(!command_log.contains("launchctl bootout"));
+    assert!(!command_log.contains("launchctl bootstrap"));
+    assert_eq!(state, "running");
+}
+
+#[test]
+fn test_daemon_restart_reports_stop_failure_without_starting() {
+    let home = TempDir::new().unwrap();
+    write_default_config(&home);
+
+    let (output, command_log, state) =
+        run_restart_with_fake_tools(&home, "running", &[("FAKE_LAUNCHD_BOOTOUT_FAIL", "1")]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("重启失败：停止守护进程失败"));
+    assert!(stderr.contains("bootout failed"));
+    assert!(command_log.contains("launchctl bootout"));
+    assert!(!command_log.contains("launchctl bootstrap"));
+    assert_eq!(state, "running");
+}
+
+#[test]
+fn test_daemon_restart_reports_start_failure_with_manual_recovery_hint() {
+    let home = TempDir::new().unwrap();
+    write_default_config(&home);
+
+    let (output, command_log, state) =
+        run_restart_with_fake_tools(&home, "running", &[("FAKE_LAUNCHD_BOOTSTRAP_FAIL", "1")]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("重启失败：启动守护进程失败"));
+    assert!(stderr.contains("请手动运行 'tm-watcher daemon start'"));
+    assert!(stderr.contains("bootstrap failed"));
+    assert!(command_log.contains("launchctl bootout"));
+    assert!(command_log.contains("launchctl bootstrap"));
+    assert_eq!(state, "stopped\n");
+}
+
+#[test]
+fn test_daemon_restart_stops_then_starts_and_reports_success() {
+    let home = TempDir::new().unwrap();
+    write_default_config(&home);
+
+    let (output, command_log, state) = run_restart_with_fake_tools(&home, "running", &[]);
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("✓ 守护进程已重启，配置已生效"));
+    assert!(command_log.contains("tmutil destinationinfo"));
+    assert!(command_log.contains("launchctl bootout"));
+    assert!(command_log.contains("launchctl bootstrap"));
+    assert_eq!(state, "running\n");
 }
 
 #[test]

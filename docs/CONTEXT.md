@@ -89,7 +89,7 @@ PRD 最初提议根据目录大小决定是否排除。
 - `tm-watcher daemon start`：预检 Time Machine、配置和数据库，生成 `~/Library/LaunchAgents/com.zzerding.tm-watcher.plist`，再调用 `launchctl bootstrap`
 - `tm-watcher daemon stop`：调用 `launchctl bootout`，并删除 plist
 - `tm-watcher daemon status`：调用 `launchctl print` 查询运行状态和 PID
-- `tm-watcher daemon restart`：先停止再重新启动 LaunchAgent
+- `tm-watcher daemon restart`：确认 daemon 正在运行，预检新配置，再停止并重新启动 LaunchAgent
 - `tm-watcher __daemon`：以前台进程运行 watcher 和定期清理，由 launchd 托管
 - LaunchAgent 配置 `RunAtLoad = true` 和 `KeepAlive.SuccessfulExit = false`，提供登录自启和异常重启
 
