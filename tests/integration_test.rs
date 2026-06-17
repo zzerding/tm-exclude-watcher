@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
 use tm_watcher::{
     Cleaner, Config, Database, Scanner, TmBackend, format_exclusion_list,
@@ -103,6 +104,53 @@ fn test_database_rejects_old_schema_with_clear_message() {
 }
 
 #[test]
+fn test_database_migrates_missing_recorded_path_mtime_column() {
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("v1-schema.db");
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE excluded_directories (
+                id INTEGER PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                rule TEXT NOT NULL,
+                size_bytes INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_checked_at DATETIME
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO excluded_directories (path, rule, size_bytes, created_at, last_checked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "/tmp/old-target",
+                "target",
+                123_i64,
+                "2026-01-02 03:04:05",
+                "2026-01-03 04:05:06"
+            ],
+        )
+        .unwrap();
+    }
+
+    let database = Database::new(&db_path).unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].size_bytes, Some(123));
+    assert_eq!(records[0].recorded_path_mtime_ns, None);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let user_version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(user_version, 2);
+}
+
+#[test]
 fn test_clean_deletes_missing_path_record_after_path_not_found_remove() {
     let db_dir = TempDir::new().unwrap();
     let db_path = db_dir.path().join("test.db");
@@ -152,8 +200,112 @@ fn test_clean_updates_existing_path_size_and_last_checked_at() {
     assert!(result.errors.is_empty());
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].size_bytes, Some(5));
+    assert!(records[0].recorded_path_mtime_ns.is_some());
     assert!(records[0].last_checked_at.is_some());
-    assert_eq!(tm_backend.is_excluded_call_count(), 1);
+    assert_eq!(tm_backend.are_excluded_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
+}
+
+#[test]
+fn test_clean_skips_size_refresh_when_recorded_mtime_matches() {
+    let temp_dir = TempDir::new().unwrap();
+    let excluded_path = temp_dir.path().join("target");
+    fs::create_dir_all(excluded_path.join("nested")).unwrap();
+    fs::write(excluded_path.join("nested/current.bin"), [1_u8, 2, 3]).unwrap();
+    let mtime_ns = path_mtime_ns(&excluded_path);
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&excluded_path, "target", Some(999))
+        .unwrap();
+    set_recorded_mtime_and_checked_at(
+        &db_path,
+        &excluded_path,
+        Some(mtime_ns),
+        "2000-01-01 00:00:00",
+    );
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.add_exclusion(&excluded_path).unwrap();
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(result.checked_count, 1);
+    assert!(result.errors.is_empty());
+    assert_eq!(records[0].size_bytes, Some(999));
+    assert_eq!(records[0].recorded_path_mtime_ns, Some(mtime_ns));
+    assert_ne!(
+        records[0].last_checked_at.as_deref(),
+        Some("2000-01-01 00:00:00")
+    );
+    assert_eq!(tm_backend.are_excluded_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
+}
+
+#[test]
+fn test_clean_refreshes_size_when_recorded_mtime_is_missing() {
+    let temp_dir = TempDir::new().unwrap();
+    let excluded_path = temp_dir.path().join("target");
+    fs::create_dir_all(&excluded_path).unwrap();
+    fs::write(excluded_path.join("current.bin"), [1_u8, 2, 3, 4]).unwrap();
+    let mtime_ns = path_mtime_ns(&excluded_path);
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&excluded_path, "target", Some(1))
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.add_exclusion(&excluded_path).unwrap();
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend));
+
+    let result = cleaner.clean().unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(result.checked_count, 1);
+    assert!(result.errors.is_empty());
+    assert_eq!(records[0].size_bytes, Some(4));
+    assert_eq!(records[0].recorded_path_mtime_ns, Some(mtime_ns));
+}
+
+#[test]
+fn test_clean_refreshes_size_when_recorded_mtime_differs() {
+    let temp_dir = TempDir::new().unwrap();
+    let excluded_path = temp_dir.path().join("target");
+    fs::create_dir_all(&excluded_path).unwrap();
+    fs::write(excluded_path.join("current.bin"), [1_u8, 2, 3, 4, 5, 6]).unwrap();
+    let mtime_ns = path_mtime_ns(&excluded_path);
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&excluded_path, "target", Some(1))
+        .unwrap();
+    set_recorded_mtime_and_checked_at(
+        &db_path,
+        &excluded_path,
+        Some(mtime_ns.saturating_sub(1)),
+        "2000-01-01 00:00:00",
+    );
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.add_exclusion(&excluded_path).unwrap();
+    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend));
+
+    let result = cleaner.clean().unwrap();
+    let records = database.get_exclusions().unwrap();
+
+    assert_eq!(result.checked_count, 1);
+    assert!(result.errors.is_empty());
+    assert_eq!(records[0].size_bytes, Some(6));
+    assert_eq!(records[0].recorded_path_mtime_ns, Some(mtime_ns));
 }
 
 #[test]
@@ -186,6 +338,7 @@ fn test_clean_does_not_follow_recorded_symlink() {
     assert_eq!(result.checked_count, 1);
     assert!(result.errors.is_empty());
     assert_eq!(records[0].size_bytes, Some(symlink_size));
+    assert!(records[0].recorded_path_mtime_ns.is_some());
     assert_ne!(records[0].size_bytes, Some(64));
 }
 
@@ -210,7 +363,8 @@ fn test_clean_repairs_existing_path_missing_tm_exclusion() {
     assert_eq!(result.cleaned_count, 0);
     assert_eq!(result.checked_count, 1);
     assert!(result.errors.is_empty());
-    assert_eq!(tm_backend.is_excluded_call_count(), 1);
+    assert_eq!(tm_backend.are_excluded_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
     assert_eq!(tm_backend.add_exclusion_call_count(), 1);
     assert!(tm_backend.get_excluded_paths().contains(&excluded_path));
 }
@@ -246,7 +400,85 @@ fn test_clean_records_error_and_continues_with_later_records() {
     assert_eq!(records.len(), 2);
     assert!(records[1].last_checked_at.is_some());
     assert_eq!(tm_backend.remove_exclusion_call_count(), 1);
-    assert_eq!(tm_backend.is_excluded_call_count(), 1);
+    assert_eq!(tm_backend.are_excluded_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
+}
+
+#[test]
+fn test_clean_batches_existing_path_tm_exclusion_checks() {
+    let temp_dir = TempDir::new().unwrap();
+    let first_path = temp_dir.path().join("project-a/target");
+    let second_path = temp_dir.path().join("project-b/node_modules");
+    fs::create_dir_all(&first_path).unwrap();
+    fs::create_dir_all(&second_path).unwrap();
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&first_path, "target", Some(0))
+        .unwrap();
+    database
+        .record_exclusion(&second_path, "node_modules", Some(0))
+        .unwrap();
+    set_recorded_mtime_and_checked_at(
+        &db_path,
+        &first_path,
+        Some(path_mtime_ns(&first_path)),
+        "2000-01-01 00:00:00",
+    );
+    set_recorded_mtime_and_checked_at(
+        &db_path,
+        &second_path,
+        Some(path_mtime_ns(&second_path)),
+        "2000-01-01 00:00:00",
+    );
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.add_exclusion(&first_path).unwrap();
+    tm_backend.add_exclusion(&second_path).unwrap();
+    let cleaner = Cleaner::new(database, Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+
+    assert_eq!(result.checked_count, 2);
+    assert!(result.errors.is_empty());
+    assert_eq!(tm_backend.are_excluded_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 0);
+}
+
+#[test]
+fn test_clean_falls_back_to_per_path_checks_when_batch_check_fails() {
+    let temp_dir = TempDir::new().unwrap();
+    let first_path = temp_dir.path().join("project-a/target");
+    let second_path = temp_dir.path().join("project-b/node_modules");
+    fs::create_dir_all(&first_path).unwrap();
+    fs::create_dir_all(&second_path).unwrap();
+
+    let db_dir = TempDir::new().unwrap();
+    let db_path = db_dir.path().join("test.db");
+    let database = Database::new(&db_path).unwrap();
+    database
+        .record_exclusion(&first_path, "target", Some(0))
+        .unwrap();
+    database
+        .record_exclusion(&second_path, "node_modules", Some(0))
+        .unwrap();
+
+    let tm_backend = tm_watcher::FakeTmBackend::new();
+    tm_backend.fail_next_batch_other("batch boom");
+    tm_backend.fail_next_add_other("repair boom");
+    let cleaner = Cleaner::new(database, Box::new(tm_backend.clone()));
+
+    let result = cleaner.clean().unwrap();
+
+    assert_eq!(result.checked_count, 1);
+    assert_eq!(result.errors.len(), 1);
+    assert!(result.errors[0].contains("repair boom"));
+    assert_eq!(tm_backend.are_excluded_call_count(), 1);
+    assert_eq!(tm_backend.is_excluded_call_count(), 2);
+    assert_eq!(tm_backend.add_exclusion_call_count(), 2);
+    assert!(tm_backend.get_excluded_paths().contains(&second_path));
 }
 
 #[test]
@@ -387,9 +619,40 @@ fn exclusion_record(
         path: PathBuf::from(path.as_ref()),
         rule: rule.to_string(),
         size_bytes,
+        recorded_path_mtime_ns: None,
         created_at: "2026-06-01 00:00:00".to_string(),
         last_checked_at: last_checked_at.map(str::to_string),
     }
+}
+
+fn path_mtime_ns(path: &Path) -> i64 {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    let duration = metadata
+        .modified()
+        .unwrap()
+        .duration_since(UNIX_EPOCH)
+        .unwrap();
+    i64::try_from(duration.as_nanos()).unwrap()
+}
+
+fn set_recorded_mtime_and_checked_at(
+    db_path: &Path,
+    path: &Path,
+    recorded_path_mtime_ns: Option<i64>,
+    last_checked_at: &str,
+) {
+    let conn = rusqlite::Connection::open(db_path).unwrap();
+    conn.execute(
+        "UPDATE excluded_directories
+         SET recorded_path_mtime_ns = ?1, last_checked_at = ?2
+         WHERE path = ?3",
+        rusqlite::params![
+            recorded_path_mtime_ns,
+            last_checked_at,
+            path.to_str().unwrap()
+        ],
+    )
+    .unwrap();
 }
 
 fn assert_in_order(haystack: &str, needles: &[&str]) {

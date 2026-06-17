@@ -5,7 +5,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone)]
 pub struct Database {
@@ -17,6 +17,7 @@ pub struct ExclusionRecord {
     pub path: PathBuf,
     pub rule: String,
     pub size_bytes: Option<i64>,
+    pub recorded_path_mtime_ns: Option<i64>,
     pub created_at: String,
     pub last_checked_at: Option<String>,
 }
@@ -33,11 +34,13 @@ impl Database {
                 path TEXT NOT NULL UNIQUE,
                 rule TEXT NOT NULL,
                 size_bytes INTEGER,
+                recorded_path_mtime_ns INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_checked_at DATETIME
             )",
             [],
         )?;
+        migrate_schema(&conn, db_path)?;
         validate_schema(&conn, db_path)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
@@ -53,7 +56,7 @@ impl Database {
         }
 
         let conn = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        validate_schema(&conn, db_path)?;
+        validate_read_only_schema(&conn, db_path)?;
 
         Ok(Some(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -94,15 +97,33 @@ impl Database {
         Ok(())
     }
 
-    /// 更新排除记录的大小和最近检查时间
-    pub fn update_exclusion_check(&self, path: &Path, size_bytes: i64) -> Result<()> {
+    /// 更新排除记录的大小、顶层修改时间和最近检查时间
+    pub fn update_exclusion_check(
+        &self,
+        path: &Path,
+        size_bytes: i64,
+        recorded_path_mtime_ns: i64,
+    ) -> Result<()> {
         let path_text = path_for_database(path)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE excluded_directories
-             SET size_bytes = ?, last_checked_at = CURRENT_TIMESTAMP
+             SET size_bytes = ?, recorded_path_mtime_ns = ?, last_checked_at = CURRENT_TIMESTAMP
              WHERE path = ?",
-            params![size_bytes, path_text],
+            params![size_bytes, recorded_path_mtime_ns, path_text],
+        )?;
+        Ok(())
+    }
+
+    /// 仅更新最近检查时间；用于大小仍新鲜时的清理确认。
+    pub fn touch_exclusion_check(&self, path: &Path) -> Result<()> {
+        let path_text = path_for_database(path)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE excluded_directories
+             SET last_checked_at = CURRENT_TIMESTAMP
+             WHERE path = ?",
+            params![path_text],
         )?;
         Ok(())
     }
@@ -111,7 +132,7 @@ impl Database {
     pub fn get_exclusions(&self) -> Result<Vec<ExclusionRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT path, rule, size_bytes, created_at, last_checked_at
+            "SELECT path, rule, size_bytes, recorded_path_mtime_ns, created_at, last_checked_at
              FROM excluded_directories
              ORDER BY id",
         )?;
@@ -122,8 +143,9 @@ impl Database {
                     path: PathBuf::from(row.get::<_, String>(0)?),
                     rule: row.get(1)?,
                     size_bytes: row.get(2)?,
-                    created_at: row.get(3)?,
-                    last_checked_at: row.get(4)?,
+                    recorded_path_mtime_ns: row.get(3)?,
+                    created_at: row.get(4)?,
+                    last_checked_at: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -146,12 +168,56 @@ impl Database {
     }
 }
 
+fn validate_read_only_schema(conn: &Connection, db_path: &Path) -> Result<()> {
+    let column_names = column_names(conn)?;
+    validate_base_columns(&column_names, db_path)
+}
+
+fn migrate_schema(conn: &Connection, db_path: &Path) -> Result<()> {
+    let column_names = column_names(conn)?;
+    validate_base_columns(&column_names, db_path)?;
+
+    if !column_names
+        .iter()
+        .any(|name| name == "recorded_path_mtime_ns")
+    {
+        conn.execute(
+            "ALTER TABLE excluded_directories
+             ADD COLUMN recorded_path_mtime_ns INTEGER",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn validate_schema(conn: &Connection, db_path: &Path) -> Result<()> {
+    let column_names = column_names(conn)?;
+    validate_base_columns(&column_names, db_path)?;
+
+    if !column_names
+        .iter()
+        .any(|name| name == "recorded_path_mtime_ns")
+    {
+        anyhow::bail!(
+            "数据库 schema 过旧（缺少 recorded_path_mtime_ns），请删除 {} 后重新运行 scan",
+            db_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn column_names(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("PRAGMA table_info(excluded_directories)")?;
     let column_names = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
 
+    Ok(column_names)
+}
+
+fn validate_base_columns(column_names: &[String], db_path: &Path) -> Result<()> {
     let required_columns = [
         "path",
         "rule",

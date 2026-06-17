@@ -35,6 +35,9 @@ pub trait TmBackend: Send + Sync {
 
     /// 检查目录是否已被排除
     fn is_excluded(&self, path: &Path) -> Result<bool>;
+
+    /// 批量检查目录是否已被排除
+    fn are_excluded(&self, paths: &[PathBuf]) -> Result<Vec<bool>>;
 }
 
 /// 测试用的假后端 - 使用内存 HashSet 模拟
@@ -44,8 +47,10 @@ pub struct FakeTmBackend {
     add_exclusion_calls: Arc<AtomicUsize>,
     remove_exclusion_calls: Arc<AtomicUsize>,
     is_excluded_calls: Arc<AtomicUsize>,
+    are_excluded_calls: Arc<AtomicUsize>,
     next_add_error: Arc<Mutex<Option<String>>>,
     next_remove_error: Arc<Mutex<Option<FakeRemoveError>>>,
+    next_batch_error: Arc<Mutex<Option<String>>>,
     is_configured: bool,
 }
 
@@ -68,8 +73,10 @@ impl FakeTmBackend {
             add_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             remove_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             is_excluded_calls: Arc::new(AtomicUsize::new(0)),
+            are_excluded_calls: Arc::new(AtomicUsize::new(0)),
             next_add_error: Arc::new(Mutex::new(None)),
             next_remove_error: Arc::new(Mutex::new(None)),
+            next_batch_error: Arc::new(Mutex::new(None)),
             is_configured: true,
         }
     }
@@ -81,8 +88,10 @@ impl FakeTmBackend {
             add_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             remove_exclusion_calls: Arc::new(AtomicUsize::new(0)),
             is_excluded_calls: Arc::new(AtomicUsize::new(0)),
+            are_excluded_calls: Arc::new(AtomicUsize::new(0)),
             next_add_error: Arc::new(Mutex::new(None)),
             next_remove_error: Arc::new(Mutex::new(None)),
+            next_batch_error: Arc::new(Mutex::new(None)),
             is_configured: false,
         }
     }
@@ -112,6 +121,10 @@ impl FakeTmBackend {
         self.is_excluded_calls.load(Ordering::SeqCst)
     }
 
+    pub fn are_excluded_call_count(&self) -> usize {
+        self.are_excluded_calls.load(Ordering::SeqCst)
+    }
+
     pub fn fail_next_add_other(&self, message: &str) {
         *self.next_add_error.lock().unwrap() = Some(message.to_string());
     }
@@ -122,6 +135,10 @@ impl FakeTmBackend {
 
     pub fn fail_next_remove_other(&self, message: &str) {
         *self.next_remove_error.lock().unwrap() = Some(FakeRemoveError::Other(message.to_string()));
+    }
+
+    pub fn fail_next_batch_other(&self, message: &str) {
+        *self.next_batch_error.lock().unwrap() = Some(message.to_string());
     }
 }
 
@@ -161,6 +178,19 @@ impl TmBackend for FakeTmBackend {
     fn is_excluded(&self, path: &Path) -> Result<bool> {
         self.is_excluded_calls.fetch_add(1, Ordering::SeqCst);
         Ok(self.excluded_paths.lock().unwrap().contains(path))
+    }
+
+    fn are_excluded(&self, paths: &[PathBuf]) -> Result<Vec<bool>> {
+        self.are_excluded_calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(message) = self.next_batch_error.lock().unwrap().take() {
+            return Err(anyhow::anyhow!(message));
+        }
+
+        let excluded_paths = self.excluded_paths.lock().unwrap();
+        Ok(paths
+            .iter()
+            .map(|path| excluded_paths.contains(path))
+            .collect())
     }
 }
 
@@ -260,6 +290,26 @@ impl TmBackend for RealTmBackend {
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.contains("[Excluded]"))
     }
+
+    fn are_excluded(&self, paths: &[PathBuf]) -> Result<Vec<bool>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let output = std::process::Command::new("tmutil")
+            .arg("isexcluded")
+            .args(paths)
+            .output()
+            .map_err(|e| anyhow::anyhow!("无法执行 tmutil: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("tmutil isexcluded 批量检查失败: {}", stderr.trim());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_isexcluded_output(&stdout, paths.len())
+    }
 }
 
 fn is_path_not_found_output(stderr: &str) -> bool {
@@ -268,9 +318,34 @@ fn is_path_not_found_output(stderr: &str) -> bool {
         || stderr.contains("Error (-43)")
 }
 
+fn parse_isexcluded_output(stdout: &str, expected_count: usize) -> Result<Vec<bool>> {
+    let statuses = stdout
+        .lines()
+        .filter_map(|line| {
+            if line.contains("[Excluded]") {
+                Some(true)
+            } else if line.contains("[Included]") {
+                Some(false)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if statuses.len() != expected_count {
+        anyhow::bail!(
+            "tmutil isexcluded 返回 {} 条状态，预期 {} 条",
+            statuses.len(),
+            expected_count
+        );
+    }
+
+    Ok(statuses)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_path_not_found_output;
+    use super::{is_path_not_found_output, parse_isexcluded_output};
 
     #[test]
     fn path_not_found_output_includes_tmutil_error_43() {
@@ -292,5 +367,25 @@ mod tests {
         assert!(!is_path_not_found_output(
             "Error (-50) while attempting to change exclusion setting."
         ));
+    }
+
+    #[test]
+    fn parse_isexcluded_output_reads_one_status_per_path() {
+        let stdout = "\
+[Excluded]    /tmp/a
+[Included]    /tmp/b
+";
+
+        assert_eq!(
+            parse_isexcluded_output(stdout, 2).unwrap(),
+            vec![true, false]
+        );
+    }
+
+    #[test]
+    fn parse_isexcluded_output_rejects_missing_status_lines() {
+        let err = parse_isexcluded_output("[Excluded]    /tmp/a\n", 2).unwrap_err();
+
+        assert!(err.to_string().contains("预期 2 条"));
     }
 }

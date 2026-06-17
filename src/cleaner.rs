@@ -1,10 +1,11 @@
 // ABOUTME: 清理器 - 对数据库排除记录做维护、删除失效路径并修复 Time Machine 排除状态
 
 use crate::{Database, TmBackend, TmBackendError};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 pub struct Cleaner {
     database: Database,
@@ -29,18 +30,43 @@ impl Cleaner {
         let mut cleaned_count = 0;
         let mut checked_count = 0;
         let mut errors = Vec::new();
+        let mut existing_records = Vec::new();
 
         for record in self.database.get_exclusions()? {
-            match self.clean_one(&record.path) {
-                Ok(CleanAction::Cleaned) => cleaned_count += 1,
-                Ok(CleanAction::Checked) => checked_count += 1,
+            match self.classify_record(record) {
+                Ok(CleanTarget::Missing(path)) => match self.clean_missing_path(&path) {
+                    Ok(()) => cleaned_count += 1,
+                    Err(err) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "清理记录时遇到错误"
+                        );
+                        errors.push(format!("{}: {}", path.display(), err));
+                    }
+                },
+                Ok(CleanTarget::Existing(target)) => existing_records.push(target),
+                Err(err) => {
+                    errors.push(err.to_string());
+                }
+            }
+        }
+
+        let exclusion_states = self.batch_exclusion_states(&existing_records);
+        for (index, target) in existing_records.iter().enumerate() {
+            let exclusion_state = exclusion_states
+                .as_ref()
+                .ok()
+                .and_then(|states| states.get(index).copied());
+            match self.clean_existing_path(target, exclusion_state) {
+                Ok(()) => checked_count += 1,
                 Err(err) => {
                     tracing::warn!(
-                        path = %record.path.display(),
+                        path = %target.path.display(),
                         error = %err,
                         "清理记录时遇到错误"
                     );
-                    errors.push(format!("{}: {}", record.path.display(), err));
+                    errors.push(format!("{}: {}", target.path.display(), err));
                 }
             }
         }
@@ -59,24 +85,67 @@ impl Cleaner {
         })
     }
 
-    fn clean_one(&self, path: &Path) -> Result<CleanAction> {
-        let metadata = match fs::symlink_metadata(path) {
+    fn classify_record(&self, record: crate::ExclusionRecord) -> Result<CleanTarget> {
+        let metadata = match fs::symlink_metadata(&record.path) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                self.clean_missing_path(path)?;
-                return Ok(CleanAction::Cleaned);
+                return Ok(CleanTarget::Missing(record.path));
             }
             Err(err) => return Err(err.into()),
         };
 
-        let size_bytes = record_size(path, &metadata)?;
-        self.database.update_exclusion_check(path, size_bytes)?;
-        if !self.tm_backend.is_excluded(path)? {
-            tracing::warn!(path = %path.display(), "排除状态缺失，正在修复");
-            self.tm_backend.add_exclusion(path)?;
+        let path_mtime_ns = path_mtime_ns(&record.path, &metadata)?;
+        Ok(CleanTarget::Existing(CleanExistingTarget {
+            path: record.path,
+            size_bytes: record.size_bytes,
+            recorded_path_mtime_ns: record.recorded_path_mtime_ns,
+            metadata,
+            path_mtime_ns,
+        }))
+    }
+
+    fn batch_exclusion_states(&self, targets: &[CleanExistingTarget]) -> Result<Vec<bool>> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(CleanAction::Checked)
+        let paths = targets
+            .iter()
+            .map(|target| target.path.clone())
+            .collect::<Vec<_>>();
+        self.tm_backend.are_excluded(&paths)
+    }
+
+    fn clean_existing_path(
+        &self,
+        target: &CleanExistingTarget,
+        batched_exclusion_state: Option<bool>,
+    ) -> Result<()> {
+        self.refresh_size_if_needed(target)?;
+
+        let is_excluded = match batched_exclusion_state {
+            Some(is_excluded) => is_excluded,
+            None => self.tm_backend.is_excluded(&target.path)?,
+        };
+        if !is_excluded {
+            tracing::warn!(path = %target.path.display(), "排除状态缺失，正在修复");
+            self.tm_backend.add_exclusion(&target.path)?;
+        }
+
+        Ok(())
+    }
+
+    fn refresh_size_if_needed(&self, target: &CleanExistingTarget) -> Result<()> {
+        if target.size_bytes.is_some()
+            && target.recorded_path_mtime_ns == Some(target.path_mtime_ns)
+        {
+            self.database.touch_exclusion_check(&target.path)?;
+            return Ok(());
+        }
+
+        let size_bytes = record_size(&target.path, &target.metadata)?;
+        self.database
+            .update_exclusion_check(&target.path, size_bytes, target.path_mtime_ns)
     }
 
     fn clean_missing_path(&self, path: &Path) -> Result<()> {
@@ -93,9 +162,17 @@ impl Cleaner {
     }
 }
 
-enum CleanAction {
-    Cleaned,
-    Checked,
+enum CleanTarget {
+    Missing(PathBuf),
+    Existing(CleanExistingTarget),
+}
+
+struct CleanExistingTarget {
+    path: PathBuf,
+    size_bytes: Option<i64>,
+    recorded_path_mtime_ns: Option<i64>,
+    metadata: fs::Metadata,
+    path_mtime_ns: i64,
 }
 
 fn record_size(path: &Path, metadata: &fs::Metadata) -> Result<i64> {
@@ -109,15 +186,27 @@ fn record_size(path: &Path, metadata: &fs::Metadata) -> Result<i64> {
 fn directory_size(path: &Path) -> Result<i64> {
     let mut total = 0;
 
-    for entry in fs::read_dir(path)? {
+    for entry in jwalk::WalkDir::new(path)
+        .follow_links(false)
+        .skip_hidden(false)
+    {
         let entry = entry?;
-        let metadata = fs::symlink_metadata(entry.path())?;
-        if metadata.is_dir() {
-            total += directory_size(&entry.path())?;
-        } else if metadata.is_file() || metadata.file_type().is_symlink() {
-            total += metadata.len() as i64;
+        let file_type = entry.file_type();
+        if file_type.is_file() || file_type.is_symlink() {
+            total += fs::symlink_metadata(entry.path())?.len() as i64;
         }
     }
 
     Ok(total)
+}
+
+fn path_mtime_ns(path: &Path, metadata: &fs::Metadata) -> Result<i64> {
+    let modified = metadata
+        .modified()
+        .with_context(|| format!("无法读取修改时间: {}", path.display()))?;
+    let duration = modified
+        .duration_since(UNIX_EPOCH)
+        .with_context(|| format!("修改时间早于 Unix epoch: {}", path.display()))?;
+    i64::try_from(duration.as_nanos())
+        .with_context(|| format!("修改时间超出可存储范围: {}", path.display()))
 }
