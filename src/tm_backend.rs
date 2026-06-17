@@ -288,7 +288,7 @@ impl TmBackend for RealTmBackend {
 
         // 输出格式: "[Excluded]    /path/to/dir" 或 "[Included]    /path/to/dir"
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(stdout.contains("[Excluded]"))
+        parse_isexcluded_output(&stdout, 1).map(|statuses| statuses[0])
     }
 
     fn are_excluded(&self, paths: &[PathBuf]) -> Result<Vec<bool>> {
@@ -322,9 +322,10 @@ fn parse_isexcluded_output(stdout: &str, expected_count: usize) -> Result<Vec<bo
     let statuses = stdout
         .lines()
         .filter_map(|line| {
-            if line.contains("[Excluded]") {
+            let status_line = line.trim_start();
+            if status_line.starts_with("[Excluded]") {
                 Some(true)
-            } else if line.contains("[Included]") {
+            } else if status_line.starts_with("[Included]") {
                 Some(false)
             } else {
                 None
@@ -379,6 +380,19 @@ mod tests {
         assert_eq!(
             parse_isexcluded_output(stdout, 2).unwrap(),
             vec![true, false]
+        );
+    }
+
+    #[test]
+    fn parse_isexcluded_output_ignores_status_text_in_path() {
+        let stdout = "\
+[Included]    /tmp/[Excluded]/target
+ [Excluded]    /tmp/[Included]/node_modules
+";
+
+        assert_eq!(
+            parse_isexcluded_output(stdout, 2).unwrap(),
+            vec![false, true]
         );
     }
 
