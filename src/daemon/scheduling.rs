@@ -1,6 +1,6 @@
 // ABOUTME: 守护进程定期清理调度 - 按配置间隔运行清理任务。
 
-use crate::{Cleaner, Database, TmBackend};
+use crate::{Cleaner, Database, RealTmBackend};
 
 /// 定期清理任务
 pub async fn run_periodic_cleanup<F>(
@@ -9,7 +9,7 @@ pub async fn run_periodic_cleanup<F>(
     interval_hours: u64,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) where
-    F: Fn() -> Box<dyn TmBackend> + Send + 'static,
+    F: Fn() -> RealTmBackend + Send + 'static,
 {
     if interval_hours == 0 {
         tracing::error!("清理间隔不能为 0");
@@ -21,7 +21,7 @@ pub async fn run_periodic_cleanup<F>(
     loop {
         tokio::select! {
             _ = tokio::time::sleep(interval) => {
-                let cleaner = Cleaner::new(database.clone(), tm_backend_factory());
+                let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend_factory());
                 match cleaner.clean() {
                     Ok(result) => {
                         tracing::info!(
@@ -51,7 +51,6 @@ pub async fn run_periodic_cleanup<F>(
 #[cfg(test)]
 mod cleanup_tests {
     use super::*;
-    use crate::FakeTmBackend;
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -60,16 +59,13 @@ mod cleanup_tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let database = Database::new(&db_path).unwrap();
-        let tm_backend = FakeTmBackend::new();
-
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         // 使用100ms间隔方便测试
         let cleanup_handle = tokio::spawn({
             let db = database.clone();
-            let tm = tm_backend.clone();
             async move {
-                run_periodic_cleanup(db, move || Box::new(tm.clone()), 0, shutdown_rx).await;
+                run_periodic_cleanup(db, RealTmBackend::new, 0, shutdown_rx).await;
             }
         });
 
@@ -85,15 +81,12 @@ mod cleanup_tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let database = Database::new(&db_path).unwrap();
-        let tm_backend = FakeTmBackend::new();
-
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let cleanup_handle = tokio::spawn({
             let db = database.clone();
-            let tm = tm_backend.clone();
             async move {
-                run_periodic_cleanup(db, move || Box::new(tm.clone()), 999, shutdown_rx).await;
+                run_periodic_cleanup(db, RealTmBackend::new, 999, shutdown_rx).await;
             }
         });
 
@@ -109,15 +102,12 @@ mod cleanup_tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
         let database = Database::new(&db_path).unwrap();
-        let tm_backend = FakeTmBackend::new();
-
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let cleanup_handle = tokio::spawn({
             let db = database.clone();
-            let tm = tm_backend.clone();
             async move {
-                run_periodic_cleanup(db, move || Box::new(tm.clone()), 0, shutdown_rx).await;
+                run_periodic_cleanup(db, RealTmBackend::new, 0, shutdown_rx).await;
             }
         });
 

@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use tm_watcher::{RealTmBackend, TmBackend};
+use tm_watcher::RealTmBackend;
 
 /// 在用户主目录下创建测试目录（系统临时目录默认已被 TM 排除，不可用）
 fn create_test_dir() -> PathBuf {

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-use crate::{Config, Database, TmBackend, launchd};
+use crate::{Config, Database, RealTmBackend, launchd};
 
 pub struct DoctorReport {
     checks: Vec<DoctorCheck>,
@@ -50,7 +50,7 @@ impl LaunchAgentDoctorState {
 pub fn run_doctor_checks(
     config_path: &Path,
     db_path: &Path,
-    tm_backend: &dyn TmBackend,
+    tm_backend: &RealTmBackend,
     launch_agent: LaunchAgentDoctorState,
 ) -> DoctorReport {
     DoctorReport {
@@ -113,7 +113,7 @@ impl DoctorStatus {
     }
 }
 
-fn check_time_machine(tm_backend: &dyn TmBackend) -> DoctorCheck {
+fn check_time_machine(tm_backend: &RealTmBackend) -> DoctorCheck {
     match tm_backend.check_configured() {
         Ok(true) => DoctorCheck::pass("Time Machine 已配置"),
         Ok(false) => {
@@ -181,7 +181,7 @@ fn check_launch_agent_plist(launch_agent: LaunchAgentDoctorState) -> DoctorCheck
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FakeTmBackend;
+    use crate::tm_backend::test_support::FakeTmutil;
     use tempfile::TempDir;
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
         let report = run_doctor_checks(
             &config_path,
             &db_path,
-            &FakeTmBackend::new_unconfigured(),
+            &FakeTmutil::new_unconfigured().backend(),
             LaunchAgentDoctorState {
                 pid: None,
                 is_loaded: false,
@@ -222,7 +222,7 @@ mod tests {
         let report = run_doctor_checks(
             &config_path,
             &db_path,
-            &FakeTmBackend::new(),
+            &FakeTmutil::new().backend(),
             LaunchAgentDoctorState {
                 pid: Some(123),
                 is_loaded: true,

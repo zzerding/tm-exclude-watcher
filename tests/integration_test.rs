@@ -3,10 +3,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+mod support;
+use support::FakeTmutil;
 use tempfile::TempDir;
 use tm_watcher::{
-    Cleaner, Config, Database, Scanner, TmBackend, format_exclusion_list,
-    format_saved_space_summary,
+    Cleaner, Config, Database, Scanner, format_exclusion_list, format_saved_space_summary,
 };
 
 #[test]
@@ -42,9 +43,9 @@ fn test_scan_and_exclude_matching_dirs() {
     let database = Database::new(&db_path).unwrap();
 
     // 使用 FakeTmBackend 执行扫描
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    // 更正：现在通过进程级 fake tmutil 执行扫描。
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -56,6 +57,7 @@ fn test_scan_and_exclude_matching_dirs() {
     assert_eq!(records.len(), 2);
 
     // 断言：FakeTmBackend 记录了 2 个路径
+    // 更正：现在断言 fake tmutil 记录的排除路径。
     let excluded_paths = tm_backend.get_excluded_paths();
     assert_eq!(excluded_paths.len(), 2);
     assert!(excluded_paths.contains(&node_modules));
@@ -160,9 +162,9 @@ fn test_clean_deletes_missing_path_record_after_path_not_found_remove() {
         .record_exclusion(&missing_path, "node_modules", Some(99))
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.fail_next_remove_path_not_found();
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
 
@@ -188,9 +190,9 @@ fn test_clean_updates_existing_path_size_and_last_checked_at() {
         .record_exclusion(&excluded_path, "target", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.add_exclusion(&excluded_path).unwrap();
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
     let records = database.get_exclusions().unwrap();
@@ -227,9 +229,9 @@ fn test_clean_skips_size_refresh_when_recorded_mtime_matches() {
         "2000-01-01 00:00:00",
     );
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.add_exclusion(&excluded_path).unwrap();
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
     let records = database.get_exclusions().unwrap();
@@ -261,9 +263,9 @@ fn test_clean_refreshes_size_when_recorded_mtime_is_missing() {
         .record_exclusion(&excluded_path, "target", Some(1))
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.add_exclusion(&excluded_path).unwrap();
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
     let records = database.get_exclusions().unwrap();
@@ -295,9 +297,9 @@ fn test_clean_refreshes_size_when_recorded_mtime_differs() {
         "2000-01-01 00:00:00",
     );
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.add_exclusion(&excluded_path).unwrap();
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
     let records = database.get_exclusions().unwrap();
@@ -327,9 +329,9 @@ fn test_clean_does_not_follow_recorded_symlink() {
         .record_exclusion(&symlink_path, "node_modules", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.add_exclusion(&symlink_path).unwrap();
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
     let records = database.get_exclusions().unwrap();
@@ -355,8 +357,8 @@ fn test_clean_repairs_existing_path_missing_tm_exclusion() {
         .record_exclusion(&excluded_path, "node_modules", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let cleaner = Cleaner::new(database, Box::new(tm_backend.clone()));
+    let tm_backend = FakeTmutil::new();
+    let cleaner = Cleaner::with_tm_backend(database, tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
 
@@ -386,9 +388,9 @@ fn test_clean_records_error_and_continues_with_later_records() {
         .record_exclusion(&existing_path, "target", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.fail_next_remove_other("boom");
-    let cleaner = Cleaner::new(database.clone(), Box::new(tm_backend.clone()));
+    let cleaner = Cleaner::with_tm_backend(database.clone(), tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
     let records = database.get_exclusions().unwrap();
@@ -434,10 +436,10 @@ fn test_clean_batches_existing_path_tm_exclusion_checks() {
         "2000-01-01 00:00:00",
     );
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.add_exclusion(&first_path).unwrap();
     tm_backend.add_exclusion(&second_path).unwrap();
-    let cleaner = Cleaner::new(database, Box::new(tm_backend.clone()));
+    let cleaner = Cleaner::with_tm_backend(database, tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
 
@@ -465,10 +467,10 @@ fn test_clean_falls_back_to_per_path_checks_when_batch_check_fails() {
         .record_exclusion(&second_path, "node_modules", Some(0))
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     tm_backend.fail_next_batch_other("batch boom");
     tm_backend.fail_next_add_other("repair boom");
-    let cleaner = Cleaner::new(database, Box::new(tm_backend.clone()));
+    let cleaner = Cleaner::with_tm_backend(database, tm_backend.backend());
 
     let result = cleaner.clean().unwrap();
 
@@ -685,13 +687,9 @@ fn test_idempotency_no_duplicate_records() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(
-        config.clone(),
-        database.clone(),
-        Box::new(tm_backend.clone()),
-    )
-    .unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner =
+        Scanner::with_tm_backend(config.clone(), database.clone(), tm_backend.backend()).unwrap();
 
     // 第一次扫描
     let result1 = scanner.scan(base_path).unwrap();
@@ -700,7 +698,7 @@ fn test_idempotency_no_duplicate_records() {
 
     // 第二次扫描（幂等性测试）
     let scanner2 =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+        Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
     let result2 = scanner2.scan(base_path).unwrap();
 
     // 断言：第二次扫描不应排除任何新目录
@@ -742,9 +740,8 @@ fn test_rule_matching_basename_only() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -785,9 +782,8 @@ fn test_non_matching_dirs_not_excluded() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -829,9 +825,8 @@ fn test_symlinks_not_followed() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -884,9 +879,8 @@ fn test_permission_error_continues_scan() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path);
 
@@ -909,7 +903,8 @@ fn test_permission_error_continues_scan() {
 #[test]
 fn test_tm_not_configured_detected() {
     // 创建未配置的 FakeTmBackend
-    let tm_backend = tm_watcher::FakeTmBackend::new_unconfigured();
+    // 更正：现在创建未配置的进程级 fake tmutil。
+    let tm_backend = FakeTmutil::new_unconfigured();
 
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -921,8 +916,8 @@ fn test_tm_not_configured_detected() {
         ..Default::default()
     };
 
-    // 断言：Scanner::with_backend() 返回错误
-    let result = Scanner::with_backend(config, database, Box::new(tm_backend));
+    // 断言：Scanner::with_tm_backend() 返回错误
+    let result = Scanner::with_tm_backend(config, database, tm_backend.backend());
     assert!(result.is_err());
     if let Err(err) = result {
         assert!(err.to_string().contains("Time Machine 未配置"));
@@ -958,9 +953,9 @@ fn test_scan_result_reports_skipped_count() {
         .record_exclusion(&node_modules, "node_modules", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
 
-    let scanner = Scanner::with_backend(config, database, Box::new(tm_backend)).unwrap();
+    let scanner = Scanner::with_tm_backend(config, database, tm_backend.backend()).unwrap();
     let result = scanner.scan(base_path).unwrap();
 
     // 断言：1 个新排除（target），1 个跳过（node_modules 已排除）
@@ -994,7 +989,7 @@ fn test_scan_dry_run_reports_matches_without_tmutil_or_database_writes() {
         .record_exclusion(&node_modules, "node_modules", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
     let result = Scanner::dry_run(config, Some(&database), base_path).unwrap();
 
     assert_eq!(result.to_exclude.len(), 1);
@@ -1064,9 +1059,8 @@ fn test_pruning_skips_subtree_of_matched_dir() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -1111,9 +1105,9 @@ fn test_pruning_also_skips_already_excluded_dirs() {
         .record_exclusion(&outer, "node_modules", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
+    let tm_backend = FakeTmutil::new();
 
-    let scanner = Scanner::with_backend(config, database, Box::new(tm_backend.clone())).unwrap();
+    let scanner = Scanner::with_tm_backend(config, database, tm_backend.backend()).unwrap();
     let result = scanner.scan(base_path).unwrap();
 
     // 断言：外层跳过，内层 target 不被遍历到
@@ -1145,9 +1139,8 @@ fn test_scan_trusts_database_record_without_tmutil_check() {
         .record_exclusion(&node_modules, "node_modules", None)
         .unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -1185,9 +1178,8 @@ fn test_rescan_recorded_directories_skips_tmutil_calls() {
             .unwrap();
     }
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner =
-        Scanner::with_backend(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database.clone(), tm_backend.backend()).unwrap();
 
     let result = scanner.scan(base_path).unwrap();
 
@@ -1216,8 +1208,8 @@ fn test_scan_root_itself_matches_rule() {
     let db_path = db_dir.path().join("test.db");
     let database = Database::new(&db_path).unwrap();
 
-    let tm_backend = tm_watcher::FakeTmBackend::new();
-    let scanner = Scanner::with_backend(config, database, Box::new(tm_backend.clone())).unwrap();
+    let tm_backend = FakeTmutil::new();
+    let scanner = Scanner::with_tm_backend(config, database, tm_backend.backend()).unwrap();
 
     let result = scanner.scan(&root).unwrap();
 

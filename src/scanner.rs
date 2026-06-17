@@ -1,13 +1,13 @@
 // ABOUTME: 目录扫描器 - 并行递归扫描并排除匹配的目录
 
-use crate::{Config, Database, TmBackend};
+use crate::{Config, Database, RealTmBackend};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 pub struct Scanner {
     rules: Vec<String>,
     database: Database,
-    tm_backend: Box<dyn TmBackend>,
+    tm_backend: RealTmBackend,
 }
 
 pub struct ScanResult {
@@ -33,11 +33,14 @@ pub struct ScanDryRunEntry {
 }
 
 impl Scanner {
-    /// 测试专用：注入 TmBackend
-    pub fn with_backend(
+    pub fn new(config: Config, database: Database) -> Result<Self> {
+        Self::with_tm_backend(config, database, RealTmBackend::new())
+    }
+
+    pub fn with_tm_backend(
         config: Config,
         database: Database,
-        tm_backend: Box<dyn TmBackend>,
+        tm_backend: RealTmBackend,
     ) -> Result<Self> {
         // 检查 Time Machine 是否配置
         if !tm_backend.check_configured()? {

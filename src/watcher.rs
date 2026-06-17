@@ -9,23 +9,31 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::{Config, Database, TmBackend};
+use crate::{Config, Database, RealTmBackend};
 
 pub struct Watcher {
     config: Config,
     database: Arc<Database>,
-    tm_backend: Arc<dyn TmBackend>,
+    tm_backend: Arc<RealTmBackend>,
     rules: Vec<String>,
     pending_exclusions: Arc<Mutex<HashMap<PathBuf, JoinHandle<()>>>>,
 }
 
 impl Watcher {
-    pub fn new(config: Config, database: Database, tm_backend: Box<dyn TmBackend>) -> Result<Self> {
+    pub fn new(config: Config, database: Database) -> Result<Self> {
+        Self::with_tm_backend(config, database, RealTmBackend::new())
+    }
+
+    pub fn with_tm_backend(
+        config: Config,
+        database: Database,
+        tm_backend: RealTmBackend,
+    ) -> Result<Self> {
         let rules = config.exclude_rules.clone();
         Ok(Self {
             config,
             database: Arc::new(database),
-            tm_backend: Arc::from(tm_backend),
+            tm_backend: Arc::new(tm_backend),
             rules,
             pending_exclusions: Arc::new(Mutex::new(HashMap::new())),
         })
@@ -269,7 +277,7 @@ fn has_recorded_exclusion_for_self_or_ancestor(database: &Database, path: &Path)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FakeTmBackend;
+    use crate::tm_backend::test_support::FakeTmutil;
     use notify::event::{CreateKind, ModifyKind, RenameMode};
     use tempfile::TempDir;
 
@@ -282,19 +290,19 @@ mod tests {
         }
     }
 
-    fn test_watcher(config: Config, database: Database, tm_backend: FakeTmBackend) -> Watcher {
-        Watcher::new(config, database, Box::new(tm_backend)).unwrap()
+    fn test_watcher(config: Config, database: Database, tmutil: &FakeTmutil) -> Watcher {
+        Watcher::with_tm_backend(config, database, tmutil.backend()).unwrap()
     }
 
-    async fn wait_for_add_count(tm_backend: &FakeTmBackend, expected_count: usize) {
+    async fn wait_for_add_count(tmutil: &FakeTmutil, expected_count: usize) {
         for _ in 0..100 {
-            if tm_backend.add_exclusion_call_count() == expected_count {
+            if tmutil.add_exclusion_call_count() == expected_count {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
-        assert_eq!(tm_backend.add_exclusion_call_count(), expected_count);
+        assert_eq!(tmutil.add_exclusion_call_count(), expected_count);
     }
 
     #[tokio::test]
@@ -304,8 +312,8 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
 
         let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
-        let tm_backend = FakeTmBackend::new();
-        let watcher = test_watcher(test_config(), database.clone(), tm_backend.clone());
+        let tmutil = FakeTmutil::new();
+        let watcher = test_watcher(test_config(), database.clone(), &tmutil);
 
         watcher
             .handle_event(Event {
@@ -314,7 +322,7 @@ mod tests {
                 attrs: Default::default(),
             })
             .await;
-        wait_for_add_count(&tm_backend, 1).await;
+        wait_for_add_count(&tmutil, 1).await;
 
         assert!(database.has_exclusion(&path).unwrap());
     }
@@ -328,8 +336,8 @@ mod tests {
         database
             .record_exclusion(&path, "node_modules", None)
             .unwrap();
-        let tm_backend = FakeTmBackend::new();
-        let watcher = test_watcher(test_config(), database.clone(), tm_backend);
+        let tmutil = FakeTmutil::new();
+        let watcher = test_watcher(test_config(), database.clone(), &tmutil);
 
         watcher
             .handle_event(Event {
@@ -353,12 +361,12 @@ mod tests {
         database
             .record_exclusion(&parent, "node_modules", None)
             .unwrap();
-        let tm_backend = FakeTmBackend::new();
-        let watcher = test_watcher(test_config(), database.clone(), tm_backend.clone());
+        let tmutil = FakeTmutil::new();
+        let watcher = test_watcher(test_config(), database.clone(), &tmutil);
 
         watcher.handle_create(child.clone()).await;
 
-        assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+        assert_eq!(tmutil.add_exclusion_call_count(), 0);
         assert!(!database.has_exclusion(&child).unwrap());
     }
 
@@ -370,17 +378,17 @@ mod tests {
         std::fs::create_dir_all(&child).unwrap();
 
         let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
-        let tm_backend = FakeTmBackend::new();
+        let tmutil = FakeTmutil::new();
         let mut config = test_config();
         config.confirmation_delay_seconds = 60;
-        let watcher = test_watcher(config, database, tm_backend.clone());
+        let watcher = test_watcher(config, database, &tmutil);
 
         watcher.handle_create(parent.clone()).await;
         watcher.handle_create(child).await;
         assert_eq!(watcher.pending_exclusions.lock().await.len(), 1);
 
         watcher.handle_remove(parent).await;
-        assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+        assert_eq!(tmutil.add_exclusion_call_count(), 0);
     }
 
     #[tokio::test]
@@ -391,10 +399,10 @@ mod tests {
         std::fs::create_dir_all(&child).unwrap();
 
         let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
-        let tm_backend = FakeTmBackend::new();
+        let tmutil = FakeTmutil::new();
         let mut config = test_config();
         config.confirmation_delay_seconds = 60;
-        let watcher = test_watcher(config, database, tm_backend.clone());
+        let watcher = test_watcher(config, database, &tmutil);
 
         watcher.handle_create(child.clone()).await;
         watcher.handle_create(parent.clone()).await;
@@ -406,7 +414,7 @@ mod tests {
         drop(pending);
 
         watcher.handle_remove(parent).await;
-        assert_eq!(tm_backend.add_exclusion_call_count(), 0);
+        assert_eq!(tmutil.add_exclusion_call_count(), 0);
     }
 
     #[tokio::test]
@@ -416,9 +424,9 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
 
         let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
-        let tm_backend = FakeTmBackend::new();
-        tm_backend.fail_next_add_other("boom");
-        let watcher = test_watcher(test_config(), database.clone(), tm_backend.clone());
+        let tmutil = FakeTmutil::new();
+        tmutil.fail_next_add_other("boom");
+        let watcher = test_watcher(test_config(), database.clone(), &tmutil);
 
         watcher
             .handle_event(Event {
@@ -427,7 +435,7 @@ mod tests {
                 attrs: Default::default(),
             })
             .await;
-        wait_for_add_count(&tm_backend, 1).await;
+        wait_for_add_count(&tmutil, 1).await;
 
         assert!(!database.has_exclusion(&path).unwrap());
     }
@@ -453,18 +461,18 @@ mod tests {
             ..Default::default()
         };
         let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
-        let tm_backend = FakeTmBackend::new();
+        let tmutil = FakeTmutil::new();
 
-        let watcher = Watcher::new(config, database.clone(), Box::new(tm_backend.clone())).unwrap();
+        let watcher = Watcher::with_tm_backend(config, database.clone(), tmutil.backend()).unwrap();
 
         // 直接调用handle_create模拟监控发现目录
         watcher.handle_create(node1.clone()).await;
         watcher.handle_create(node2.clone()).await;
 
         // 等待异步排除完成
-        wait_for_add_count(&tm_backend, 2).await;
+        wait_for_add_count(&tmutil, 2).await;
 
-        assert_eq!(tm_backend.add_exclusion_call_count(), 2);
+        assert_eq!(tmutil.add_exclusion_call_count(), 2);
         assert!(database.has_exclusion(&node1).unwrap());
         assert!(database.has_exclusion(&node2).unwrap());
     }
@@ -482,11 +490,11 @@ mod tests {
             ..Default::default()
         };
         let database = Database::new(&temp_dir.path().join("test.db")).unwrap();
-        let tm_backend = FakeTmBackend::new();
+        let tmutil = FakeTmutil::new();
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        let watcher = Watcher::new(config, database, Box::new(tm_backend)).unwrap();
+        let watcher = Watcher::with_tm_backend(config, database, tmutil.backend()).unwrap();
         let watch_handle =
             tokio::spawn(async move { watcher.watch_multiple(&[path], shutdown_rx).await });
 

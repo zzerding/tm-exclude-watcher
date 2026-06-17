@@ -3,10 +3,10 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
-use crate::{Database, TmBackend};
+use crate::{Database, RealTmBackend};
 
 /// 检查 Time Machine 是否已配置
-pub fn check_tm_configured(backend: &dyn TmBackend) -> Result<()> {
+pub fn check_tm_configured(backend: &RealTmBackend) -> Result<()> {
     if !backend.check_configured()? {
         anyhow::bail!("Time Machine 未配置，请先配置后再启动守护进程");
     }
@@ -16,12 +16,12 @@ pub fn check_tm_configured(backend: &dyn TmBackend) -> Result<()> {
 #[cfg(test)]
 mod tm_check_tests {
     use super::*;
-    use crate::FakeTmBackend;
+    use crate::tm_backend::test_support::FakeTmutil;
 
     #[test]
     fn test_daemon_refuses_to_start_if_tm_not_configured() {
-        let backend = FakeTmBackend::new_unconfigured();
-        let result = check_tm_configured(&backend);
+        let tmutil = FakeTmutil::new_unconfigured();
+        let result = check_tm_configured(&tmutil.backend());
         assert!(result.is_err());
         assert!(
             result
@@ -66,6 +66,7 @@ mod precheck_tests {
 
         // RealTmBackend 需要真实 tmutil，这个测试会失败
         // 在集成环境中用 FakeTmBackend mock
+        // 更正：当前测试路径通过进程级 fake tmutil 覆盖配置检查。
         // 这里我们只测试函数签名存在
         let result = precheck_daemon_start(&config_path, &db_path);
         // 无法在测试中验证真实 TM，跳过断言
