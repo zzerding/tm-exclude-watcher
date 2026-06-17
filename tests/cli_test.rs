@@ -192,6 +192,21 @@ exit 0
     );
 }
 
+fn write_removeexclusion_error_43_tmutil(bin_dir: &Path) {
+    write_executable(
+        &bin_dir.join("tmutil"),
+        r#"#!/bin/sh
+if [ "$1" = "removeexclusion" ]; then
+  echo "$2: Error (-43) while attempting to change exclusion setting." >&2
+  exit 1
+fi
+
+echo "unexpected tmutil command: $*" >&2
+exit 2
+"#,
+    );
+}
+
 fn run_restart_with_fake_tools(
     home: &TempDir,
     initial_state: &str,
@@ -426,6 +441,35 @@ fn test_daemon_restart_stops_then_starts_and_reports_success() {
     assert!(command_log.contains("launchctl bootout"));
     assert!(command_log.contains("launchctl bootstrap"));
     assert_eq!(state, "running\n");
+}
+
+#[test]
+fn test_clean_deletes_record_when_removeexclusion_reports_error_43() {
+    let home = TempDir::new().unwrap();
+    let bin_dir = TempDir::new().unwrap();
+    let missing_path = home.path().join("project/target");
+    write_exclusion_record(&home, &missing_path, "target");
+    write_removeexclusion_error_43_tmutil(bin_dir.path());
+
+    let output = tm_watcher_command(&["clean"], &home)
+        .env("PATH", fake_daemon_tool_path(bin_dir.path()))
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("清理: 1 条记录"));
+    assert!(stdout.contains("错误: 0 个"));
+
+    let conn =
+        rusqlite::Connection::open(home.path().join(".local/share/tm-watcher/exclusions.db"))
+            .unwrap();
+    let record_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM excluded_directories", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(record_count, 0);
 }
 
 #[test]

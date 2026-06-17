@@ -263,5 +263,34 @@ impl TmBackend for RealTmBackend {
 }
 
 fn is_path_not_found_output(stderr: &str) -> bool {
-    stderr.contains("No such file or directory") || stderr.contains("does not exist")
+    stderr.contains("No such file or directory")
+        || stderr.contains("does not exist")
+        || stderr.contains("Error (-43)")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_path_not_found_output;
+
+    #[test]
+    fn path_not_found_output_includes_tmutil_error_43() {
+        let stderr =
+            "/tmp/project/target: Error (-43) while attempting to change exclusion setting.";
+
+        assert!(is_path_not_found_output(stderr));
+    }
+
+    #[test]
+    fn path_not_found_output_keeps_existing_english_messages() {
+        assert!(is_path_not_found_output("No such file or directory"));
+        assert!(is_path_not_found_output("path does not exist"));
+    }
+
+    #[test]
+    fn path_not_found_output_rejects_ordinary_tmutil_errors() {
+        assert!(!is_path_not_found_output("Operation not permitted"));
+        assert!(!is_path_not_found_output(
+            "Error (-50) while attempting to change exclusion setting."
+        ));
+    }
 }
