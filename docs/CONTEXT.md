@@ -33,8 +33,13 @@
 - **用途：** 统计功能（"节省了多少备份空间"），辅助用户决策哪些目录值得手动清理
 - **维护策略：** 定期刷新模式
   - 排除时：计算并记录初始大小
-  - 定期清理时：如果目录仍存在，重新计算并更新 `size_bytes`
+  - 定期清理时：如果目录仍存在，优先用记录路径本身的顶层修改时间判断是否需要重新计算
+  - 如果记录已有 `size_bytes` 且 `recorded_path_mtime_ns` 与当前顶层修改时间一致，跳过递归大小计算，只更新 `last_checked_at`
+  - 如果记录缺少顶层修改时间或顶层修改时间变化，重新计算并更新 `size_bytes` 和 `recorded_path_mtime_ns`
   - 数据新鲜度：最多延迟一个清理周期（默认 24 小时）
+
+**顶层修改时间取舍：**
+`recorded_path_mtime_ns` 只记录被排除路径本身的修改时间，不扫描子树寻找最新修改时间。这个策略用少量精度换取 `clean` 的稳定性能：嵌套文件内容变化但顶层目录 mtime 未变化时，大小统计可能延迟到后续顶层变化或手动刷新策略更新；Time Machine 排除状态修复和缺失路径清理不受影响。
 
 ### 监控路径 (Watch Path)
 用户配置的根目录，例如 `~/Documents/src`。
@@ -230,16 +235,17 @@ interval_hours = 24
 └── exclusions.db      # SQLite 数据库
 ```
 
-**Schema 版本管理（MVP）：**
-- 不实现迁移机制
-- 使用 SQLite `PRAGMA user_version` 记录 schema 版本号（初始为 1）
-- 如果未来版本检测到版本不匹配，提示用户删除旧数据库并重新扫描
-- v1.0 前如果需要保留数据，再加入迁移逻辑
+**Schema 版本管理：**
+- 使用 SQLite `PRAGMA user_version` 记录 schema 版本号
+- v1 schema：基础排除记录字段（`path`、`rule`、`size_bytes`、`created_at`、`last_checked_at`）
+- v2 schema：新增 `recorded_path_mtime_ns`，用于 `clean` 跳过未变化目录的递归大小计算
+- 可写打开数据库时，工具会把 v1 自动迁移到 v2
+- `scan --dry-run` 只读打开数据库且不写入 schema；它允许读取 v1 基础 schema 来保持预览模式不改用户状态
 
 **理由：**
-- MVP schema 简单且稳定，预期不会频繁变更
-- 数据可重建（重新扫描即可），不是关键持久化数据
-- 避免过早优化
+- 排除记录可重建，但保留大小统计和检查时间能减少用户重新扫描成本
+- v1 → v2 是追加 nullable 列，迁移风险低，适合自动执行
+- 预览模式必须继续满足“不写数据库”的承诺
 
 ### 并发控制 (Concurrency Control)
 多个操作可能同时访问数据库和文件系统（守护进程、定期清理、CLI 命令）。
