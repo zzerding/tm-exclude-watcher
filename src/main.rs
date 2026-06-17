@@ -145,7 +145,7 @@ fn cmd_scan(path: &str) -> Result<()> {
     let database = open_default_database()?;
 
     // 使用真实 tmutil 后端扫描
-    let scanner = Scanner::with_backend(config, database, Box::new(RealTmBackend::new()))?;
+    let scanner = Scanner::new(config, database)?;
 
     println!("扫描中: {}", scan_path.display());
     let result = scanner.scan(&scan_path)?;
@@ -249,7 +249,7 @@ fn cmd_list() -> Result<()> {
 
 fn cmd_clean() -> Result<()> {
     let database = open_default_database()?;
-    let cleaner = Cleaner::new(database, Box::new(RealTmBackend::new()));
+    let cleaner = Cleaner::new(database);
     let result = cleaner.clean()?;
 
     println!("清理完成:");
@@ -345,7 +345,7 @@ fn cmd_watch(path: &str) -> Result<()> {
 
     let database = open_default_database()?;
 
-    let watcher = Watcher::new(config, database, Box::new(RealTmBackend::new()))?;
+    let watcher = Watcher::new(config, database)?;
 
     tokio::runtime::Runtime::new()?.block_on(watcher.watch(&watch_path))
 }
@@ -465,10 +465,10 @@ fn cmd_daemon_entrypoint() -> Result<()> {
     let config = Config::load_or_create(&config_path)?;
 
     let database = open_default_database()?;
-    let tm_backend = Box::new(RealTmBackend::new());
+    let tm_backend = RealTmBackend::new();
 
     // 检查 Time Machine 是否配置
-    check_tm_configured(tm_backend.as_ref())?;
+    check_tm_configured(&tm_backend)?;
 
     tracing::info!("守护进程启动中");
     tracing::info!(path = %config_path.display(), "加载配置文件");
@@ -497,11 +497,7 @@ fn cmd_daemon_entrypoint() -> Result<()> {
             .collect();
 
         let watch_handle = if !watch_paths.is_empty() {
-            let watcher_clone = Watcher::new(
-                config.clone(),
-                database.clone(),
-                Box::new(RealTmBackend::new()),
-            )?;
+            let watcher_clone = Watcher::new(config.clone(), database.clone())?;
             let shutdown_rx_clone = shutdown_rx.clone();
             Some(tokio::spawn(async move {
                 watcher_clone
@@ -518,13 +514,7 @@ fn cmd_daemon_entrypoint() -> Result<()> {
             let interval = config.interval_hours;
             let shutdown_rx_clone = shutdown_rx.clone();
             async move {
-                run_periodic_cleanup(
-                    db,
-                    || Box::new(RealTmBackend::new()),
-                    interval,
-                    shutdown_rx_clone,
-                )
-                .await;
+                run_periodic_cleanup(db, RealTmBackend::new, interval, shutdown_rx_clone).await;
             }
         });
 

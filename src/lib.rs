@@ -23,5 +23,5 @@ pub use doctor::{LaunchAgentDoctorState, run_doctor_checks};
 pub use list::{format_exclusion_list, format_saved_space_summary};
 pub use logs::cmd_logs;
 pub use scanner::{ScanDryRunEntry, ScanDryRunResult, ScanResult, Scanner};
-pub use tm_backend::{FakeTmBackend, RealTmBackend, TmBackend, TmBackendError};
+pub use tm_backend::{RealTmBackend, TmBackendError};
 pub use watcher::Watcher;

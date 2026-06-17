@@ -1,6 +1,6 @@
 // ABOUTME: 清理器 - 对数据库排除记录做维护、删除失效路径并修复 Time Machine 排除状态
 
-use crate::{Database, TmBackend, TmBackendError};
+use crate::{Database, RealTmBackend, TmBackendError};
 use anyhow::{Context, Result};
 use std::fs;
 use std::io;
@@ -9,7 +9,7 @@ use std::time::UNIX_EPOCH;
 
 pub struct Cleaner {
     database: Database,
-    tm_backend: Box<dyn TmBackend>,
+    tm_backend: RealTmBackend,
 }
 
 pub struct CleanResult {
@@ -19,7 +19,11 @@ pub struct CleanResult {
 }
 
 impl Cleaner {
-    pub fn new(database: Database, tm_backend: Box<dyn TmBackend>) -> Self {
+    pub fn new(database: Database) -> Self {
+        Self::with_tm_backend(database, RealTmBackend::new())
+    }
+
+    pub fn with_tm_backend(database: Database, tm_backend: RealTmBackend) -> Self {
         Self {
             database,
             tm_backend,
