@@ -1,11 +1,11 @@
 // ABOUTME: 目录扫描器 - 并行递归扫描并排除匹配的目录
 
-use crate::{Config, Database, RuleMatcher, TmBackend};
+use crate::{Config, Database, TmBackend};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 pub struct Scanner {
-    matcher: RuleMatcher,
+    rules: Vec<String>,
     database: Database,
     tm_backend: Box<dyn TmBackend>,
 }
@@ -45,7 +45,7 @@ impl Scanner {
         }
 
         Ok(Self {
-            matcher: RuleMatcher::new(config.exclude_rules),
+            rules: config.exclude_rules,
             database,
             tm_backend,
         })
@@ -63,7 +63,16 @@ impl Scanner {
         let mut errors = Vec::new();
 
         // 边界：扫描根目录本身就匹配规则时，直接处理并返回（无需遍历子树）
-        if let Some(rule) = self.matcher.matches(path) {
+        let root_rule = path
+            .file_name()
+            .and_then(|basename| basename.to_str())
+            .and_then(|basename| {
+                self.rules
+                    .iter()
+                    .find(|rule| rule.as_str() == basename)
+                    .cloned()
+            });
+        if let Some(rule) = root_rule {
             self.exclude_one(path, &rule, &mut excluded_count, &mut skipped_count)?;
             tracing::info!(
                 path = %path.display(),
@@ -80,7 +89,8 @@ impl Scanner {
         }
 
         // 剪枝回调在 rayon 线程上运行，需要独立的 matcher 副本
-        let matcher = self.matcher.clone();
+        // 更正：旧匹配器结构已移除，这里 clone 规则列表供回调使用。
+        let rules = self.rules.clone();
         let walker = jwalk::WalkDir::new(path)
             .follow_links(false)
             .skip_hidden(false) // 规则含 .venv/.cache 等隐藏目录，必须关闭
@@ -88,9 +98,9 @@ impl Scanner {
                 // 并行读目录时剪枝：匹配的子目录不再下钻
                 for child in children.iter_mut().flatten() {
                     if child.file_type.is_dir()
-                        && matcher
-                            .matches_name(&child.file_name.to_string_lossy())
-                            .is_some()
+                        && rules
+                            .iter()
+                            .any(|rule| rule.as_str() == child.file_name.to_string_lossy())
                     {
                         child.read_children_path = None; // 剪枝
                     }
@@ -117,7 +127,16 @@ impl Scanner {
             let entry_path = entry.path();
 
             // 检查是否匹配规则（匹配的目录已在回调中剪枝，这里负责排除和记录）
-            if let Some(rule) = self.matcher.matches(&entry_path) {
+            let entry_rule = entry_path
+                .file_name()
+                .and_then(|basename| basename.to_str())
+                .and_then(|basename| {
+                    self.rules
+                        .iter()
+                        .find(|rule| rule.as_str() == basename)
+                        .cloned()
+                });
+            if let Some(rule) = entry_rule {
                 self.exclude_one(&entry_path, &rule, &mut excluded_count, &mut skipped_count)?;
             }
         }
@@ -143,7 +162,7 @@ impl Scanner {
         database: Option<&Database>,
         path: &Path,
     ) -> Result<ScanDryRunResult> {
-        let matcher = RuleMatcher::new(config.exclude_rules);
+        let rules = config.exclude_rules;
         let mut result = ScanDryRunResult {
             to_exclude: Vec::new(),
             skipped: Vec::new(),
@@ -151,7 +170,11 @@ impl Scanner {
         };
 
         // 边界：扫描根目录本身就匹配规则时，直接处理并返回（无需遍历子树）
-        if let Some(rule) = matcher.matches(path) {
+        let root_rule = path
+            .file_name()
+            .and_then(|basename| basename.to_str())
+            .and_then(|basename| rules.iter().find(|rule| rule.as_str() == basename).cloned());
+        if let Some(rule) = root_rule {
             push_dry_run_match(database, path, &rule, &mut result)?;
             tracing::debug!(
                 path = %path.display(),
@@ -164,7 +187,8 @@ impl Scanner {
         }
 
         // 剪枝回调在 rayon 线程上运行，需要独立的 matcher 副本
-        let walker_matcher = matcher.clone();
+        // 更正：旧匹配器结构已移除，这里 clone 规则列表供回调使用。
+        let walker_rules = rules.clone();
         let walker = jwalk::WalkDir::new(path)
             .follow_links(false)
             .skip_hidden(false) // 规则含 .venv/.cache 等隐藏目录，必须关闭
@@ -173,9 +197,9 @@ impl Scanner {
                 for child in children.iter_mut().flatten() {
                     // 更正：符号链接本身也参与规则匹配，但不跟随目标。
                     if is_scan_candidate(&child.file_type)
-                        && walker_matcher
-                            .matches_name(&child.file_name.to_string_lossy())
-                            .is_some()
+                        && walker_rules
+                            .iter()
+                            .any(|rule| rule.as_str() == child.file_name.to_string_lossy())
                     {
                         child.read_children_path = None; // 剪枝
                     }
@@ -203,7 +227,11 @@ impl Scanner {
             let entry_path = entry.path();
 
             // 检查是否匹配规则（匹配的目录已在回调中剪枝，这里负责预览分类）
-            if let Some(rule) = matcher.matches(&entry_path) {
+            let entry_rule = entry_path
+                .file_name()
+                .and_then(|basename| basename.to_str())
+                .and_then(|basename| rules.iter().find(|rule| rule.as_str() == basename).cloned());
+            if let Some(rule) = entry_rule {
                 push_dry_run_match(database, &entry_path, &rule, &mut result)?;
             }
         }
