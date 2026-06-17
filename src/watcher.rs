@@ -9,24 +9,24 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::{Config, Database, RuleMatcher, TmBackend};
+use crate::{Config, Database, TmBackend};
 
 pub struct Watcher {
     config: Config,
     database: Arc<Database>,
     tm_backend: Arc<dyn TmBackend>,
-    matcher: RuleMatcher,
+    rules: Vec<String>,
     pending_exclusions: Arc<Mutex<HashMap<PathBuf, JoinHandle<()>>>>,
 }
 
 impl Watcher {
     pub fn new(config: Config, database: Database, tm_backend: Box<dyn TmBackend>) -> Result<Self> {
-        let matcher = RuleMatcher::new(config.exclude_rules.clone());
+        let rules = config.exclude_rules.clone();
         Ok(Self {
             config,
             database: Arc::new(database),
             tm_backend: Arc::from(tm_backend),
-            matcher,
+            rules,
             pending_exclusions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -108,9 +108,18 @@ impl Watcher {
             return;
         }
 
-        if self.matcher.matches(&path).is_none() {
+        let rule = path
+            .file_name()
+            .and_then(|basename| basename.to_str())
+            .and_then(|basename| {
+                self.rules
+                    .iter()
+                    .find(|rule| rule.as_str() == basename)
+                    .cloned()
+            });
+        let Some(rule) = rule else {
             return;
-        }
+        };
 
         let already_covered = tokio::task::spawn_blocking({
             let db = self.database.clone();
@@ -134,7 +143,6 @@ impl Watcher {
             let path_for_cleanup = path.clone();
             let db = self.database.clone();
             let tm = self.tm_backend.clone();
-            let matcher = self.matcher.clone();
             let pending = self.pending_exclusions.clone();
 
             async move {
@@ -145,9 +153,6 @@ impl Watcher {
                     return;
                 }
 
-                let rule = matcher
-                    .matches(&path)
-                    .unwrap_or_else(|| "unknown".to_string());
                 let display_path = path.display().to_string();
 
                 let exclude_result = tokio::task::spawn_blocking({
