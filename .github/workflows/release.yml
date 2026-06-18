@@ -192,7 +192,7 @@ jobs:
             }
             { print "__unexpected__/" $0 }
           ' archive-contents.txt | sort -u > archive-files.txt
-          printf "LICENSE\nREADME.md\n%s\n" "$PACKAGE_NAME" | sort > expected-archive-files.txt
+          printf "CHANGELOG.md\nLICENSE\nREADME.md\n%s\n" "$PACKAGE_NAME" | sort > expected-archive-files.txt
           diff -u expected-archive-files.txt archive-files.txt
 
       - name: Upload archive

@@ -57,6 +57,7 @@ tarball 内容保持最小：
 ```text
 tm-watcher
 README.md
+CHANGELOG.md
 LICENSE
 ```
 

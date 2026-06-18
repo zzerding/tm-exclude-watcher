@@ -101,6 +101,7 @@ fn test_release_docs_match_workflow_runner_and_asset_contract() {
         "x86_64-apple-darwin",
         "tm-watcher-v0.2.0-aarch64-apple-darwin.tar.gz",
         "tm-watcher-v0.2.0-x86_64-apple-darwin.tar.gz",
+        "CHANGELOG.md",
         "SHA256SUMS",
     ] {
         assert!(release_doc.contains(expected));
@@ -110,6 +111,7 @@ fn test_release_docs_match_workflow_runner_and_asset_contract() {
     assert!(workflow.contains("macos-15-intel"));
     assert!(workflow.contains("aarch64-apple-darwin.tar.gz"));
     assert!(workflow.contains("x86_64-apple-darwin.tar.gz"));
+    assert!(workflow.contains("CHANGELOG.md"));
     assert!(workflow.contains("SHA256SUMS"));
     assert!(!workflow.contains("macos-14"));
 
