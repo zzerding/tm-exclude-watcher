@@ -1,6 +1,11 @@
 # tm-watcher
 
-自动管理 macOS Time Machine 备份排除列表的命令行工具。监控开发目录，自动排除 `node_modules`、`target` 等依赖目录，目录删除后自动清理排除记录。
+[![GitHub Release](https://img.shields.io/github/v/release/zzerding/tm-exclude-watcher)](https://github.com/zzerding/tm-exclude-watcher/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-Edition%202024-orange?logo=rust)](https://www.rust-lang.org/)
+![Release Workflow](https://github.com/zzerding/tm-exclude-watcher/actions/workflows/release.yml/badge.svg)
+
+你的 Time Machine 备份盘是不是被无数个 `node_modules`、`target`、`build` 目录迅速塞满？`tm-watcher` 是一款轻量级的 macOS 命令行工具，安装后只需 `tm-watcher daemon start`，即可自动把可重现的依赖目录排除在备份之外，目录删除后还会自动清理记录。从此告别手动维护 Time Machine 排除列表，让备份更快、备份盘更耐用，你也更专注于写代码。
 
 ## 功能特性
 
@@ -20,7 +25,7 @@
 
 ### Homebrew
 
-stable 发布后，普通用户可通过 Homebrew 安装：
+stable 发布后，可通过 Homebrew 安装：
 
 ```bash
 brew tap zzerding/tap
@@ -76,7 +81,7 @@ tm-watcher scan ~/Documents/src
 
 输出示例：
 
-```
+```text
 扫描中: /Users/biz/Documents/src
 
 扫描完成:
@@ -98,7 +103,7 @@ tm-watcher list
 
 输出示例：
 
-```
+```text
 排除记录: 3 条，已知大小合计 2.4 GB，未知大小 1 条
 
 #  大小      规则          检查时间          路径
@@ -117,7 +122,7 @@ tm-watcher clean
 
 输出示例：
 
-```
+```text
 清理完成:
   清理: 2 条记录
   检查: 15 条记录
@@ -139,13 +144,13 @@ tm-watcher daemon status
 tm-watcher daemon stop
 ```
 
-**特性:**
-- **登录自启:** 守护进程在用户登录时自动启动（macOS LaunchAgent）
-- **崩溃重启:** 异常退出时自动重启，正常退出（stop 命令）不会拉起
-- **日志路径:** `~/.local/share/tm-watcher/daemon.log`
-- **升级提示:** `tm-watcher daemon status` 会检查 daemon 状态；如果 LaunchAgent 仍指向旧二进制路径，会提示运行 `tm-watcher daemon stop && tm-watcher daemon start`
+**特性：**
+- **登录自启**：守护进程在用户登录时自动启动（macOS LaunchAgent）
+- **崩溃重启**：异常退出时自动重启，正常退出（stop 命令）不会拉起
+- **日志路径**：`~/.local/share/tm-watcher/daemon.log`
+- **升级提示**：`tm-watcher daemon status` 会检查 daemon 状态；如果 LaunchAgent 仍指向旧二进制路径，会提示运行 `tm-watcher daemon stop && tm-watcher daemon start`
 
-**开发者注意:**
+**开发者注意：**
 - plist 指向 `current_exe()` 绝对路径，开发模式下是 `target/debug/tm-watcher`
 - `cargo clean` 后需重新执行 `tm-watcher daemon start`
 - 手动替换二进制后可用 `tm-watcher daemon status` 检查是否需要重启 daemon
@@ -214,6 +219,20 @@ tm-watcher config add-rule ".pytest_cache"
 - [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.3）
 
 当前版本：**v0.3.0**
+
+## 联系我
+
+有问题、想反馈，或者单纯打个招呼，可以通过以下方式找到我：
+
+- [linux.do](https://linux.do/u/zzerd/summary)
+- [V2EX](https://v2ex.com/member/zzerd)
+
+## 相关文档
+
+- [英文版 README](./README.en.md) — 本页的英文翻译
+- [docs/CONTEXT.md](./docs/CONTEXT.md) — 领域语言、核心概念与长期设计约定
+- [docs/tm-exclude-watcher-prd.md](./docs/tm-exclude-watcher-prd.md) — 产品目标、功能范围、路线图与测试策略
+- [skills/stacked-issue-pr-workflow/SKILL.md](./skills/stacked-issue-pr-workflow/SKILL.md) — 通过 stacked pull request 实现 GitHub issue 的协作流程说明
 
 ## License
 
