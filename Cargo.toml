@@ -1,6 +1,6 @@
 [package]
 name = "tm-watcher"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Automatically manage macOS Time Machine exclusions for development directories"
 repository = "https://github.com/zzerding/tm-exclude-watcher"
@@ -23,6 +23,12 @@ tracing-subscriber = "0.3"
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
 
 [profile.dist]
 inherits = "release"

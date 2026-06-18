@@ -42,12 +42,22 @@ fn test_readme_documents_config_command() {
 }
 
 #[test]
+fn test_readme_documents_v0_3_commands() {
+    let readme = readme();
+
+    assert!(readme.contains("tm-watcher scan ~/Documents/src --dry-run"));
+    assert!(readme.contains("tm-watcher logs -n 100"));
+    assert!(readme.contains("tm-watcher logs --follow"));
+    assert!(readme.contains("tm-watcher doctor"));
+    assert!(readme.contains("当前版本：**v0.3.0**"));
+}
+
+#[test]
 fn test_readme_does_not_promise_unshipped_release_features() {
     let readme = readme();
     let unsupported_phrases = [
         "brew services",
         "service do",
-        "tm-watcher doctor",
         "Homebrew service",
         "notarization",
         "GUI",

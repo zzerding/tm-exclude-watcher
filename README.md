@@ -5,9 +5,11 @@
 ## 功能特性
 
 - 🔍 **递归扫描**：扫描指定路径下所有匹配规则的子目录
+- 👀 **预览模式**：先用 `scan --dry-run` 查看将排除的目录，不修改系统状态
 - 🚫 **自动排除**：调用 `tmutil` 将目录添加到 Time Machine 排除列表
 - 📊 **记录管理**：本地数据库记录所有排除操作
 - 🧹 **智能清理**：检测失效记录并同步清理 Time Machine 排除列表
+- 🩺 **健康检查**：检查 Time Machine、配置、数据库和 daemon 状态
 
 ## 系统要求
 
@@ -80,6 +82,12 @@ tm-watcher scan ~/Documents/src
 扫描完成:
   新排除: 12 个目录
   已跳过: 3 个目录（之前已排除）
+```
+
+预览将被排除的目录，不调用 `tmutil`，不写数据库：
+
+```bash
+tm-watcher scan ~/Documents/src --dry-run
 ```
 
 ### 查看已排除的目录
@@ -155,6 +163,14 @@ tm-watcher logs -n 100
 tm-watcher logs --follow
 ```
 
+### 健康检查
+
+检查 Time Machine、配置文件、数据库、daemon 状态和 LaunchAgent：
+
+```bash
+tm-watcher doctor
+```
+
 ## 配置
 
 配置文件位于 `~/.config/tm-watcher/config.toml`，首次运行时自动生成。
@@ -194,9 +210,10 @@ tm-watcher config add-rule ".pytest_cache"
 - [x] Homebrew formula 生成和 tap 更新 workflow（v0.2）
 - [x] 日志查看命令（v0.3）
 - [x] 配置管理命令（v0.3）
-- [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.2）
+- [x] 健康检查和扫描预览（v0.3）
+- [ ] Apple Silicon 真机 E2E 和 stable 发布验收（v0.3）
 
-当前版本：**v0.2.0**
+当前版本：**v0.3.0**
 
 ## License
 

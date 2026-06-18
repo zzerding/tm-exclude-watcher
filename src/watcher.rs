@@ -305,6 +305,18 @@ mod tests {
         assert_eq!(tmutil.add_exclusion_call_count(), expected_count);
     }
 
+    async fn wait_for_recorded_exclusion(database: &Database, path: &Path) {
+        for _ in 0..100 {
+            if database.has_exclusion(path).unwrap() {
+                return;
+            }
+
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert!(database.has_exclusion(path).unwrap());
+    }
+
     #[tokio::test]
     async fn rename_to_existing_matching_directory_is_created() {
         let temp_dir = TempDir::new().unwrap();
@@ -322,9 +334,8 @@ mod tests {
                 attrs: Default::default(),
             })
             .await;
-        wait_for_add_count(&tmutil, 1).await;
 
-        assert!(database.has_exclusion(&path).unwrap());
+        wait_for_recorded_exclusion(&database, &path).await;
     }
 
     #[tokio::test]
@@ -470,11 +481,10 @@ mod tests {
         watcher.handle_create(node2.clone()).await;
 
         // 等待异步排除完成
-        wait_for_add_count(&tmutil, 2).await;
+        wait_for_recorded_exclusion(&database, &node1).await;
+        wait_for_recorded_exclusion(&database, &node2).await;
 
         assert_eq!(tmutil.add_exclusion_call_count(), 2);
-        assert!(database.has_exclusion(&node1).unwrap());
-        assert!(database.has_exclusion(&node2).unwrap());
     }
 
     #[tokio::test]
